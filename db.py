@@ -14,12 +14,16 @@ class RestDB:
         self.key = str(key or "")
         self.timeout = timeout
         self.session = requests.Session()
-        self.session.headers.update({
+        base_headers = {
             "apikey": self.key,
-            "Authorization": f"Bearer {self.key}",
             "Content-Type": "application/json",
             "Accept": "application/json",
-        })
+        }
+        # Legacy service_role keys are JWTs and can be used as Bearer tokens.
+        # Modern sb_secret_* keys are API keys and must not be treated as JWTs.
+        if self.key.count(".") == 2:
+            base_headers["Authorization"] = f"Bearer {self.key}"
+        self.session.headers.update(base_headers)
 
     @property
     def ready(self) -> bool:

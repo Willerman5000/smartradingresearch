@@ -22,7 +22,7 @@ def test_summary_and_features():
 
 
 def test_validation_never_production_authority():
-    finding={'engine':'execution','experiment':'X','feature_key':'x','scope':{},'metrics':{'all':{'resolved':40,'symbols':['BTC-USDT','ETH-USDT'],'net_evidence_pct':100},'validation':{'resolved':12,'expectancy_r':0.4,'profit_factor':2.0}}}
+    finding={'engine':'execution','experiment':'X','feature_key':'x','research_version':'RFV1_3_INTEGRITY_20260912','scope':{},'meta':{'is_current':True,'runtime_contract':{'runtime_trackable':True}},'metrics':{'all':{'resolved':40,'symbols':['BTC-USDT','ETH-USDT'],'net_evidence_pct':100},'validation':{'resolved':12,'expectancy_r':0.4,'profit_factor':2.0,'profit_factor_degenerate':False},'walk_forward':{'valid_folds':3,'positive_fold_ratio':1.0}}}
     out=analyze_findings([finding])[0]
     assert out['stage']=='SHADOW_READY'
     assert out['authority']=='RESEARCH_ONLY'

@@ -70,6 +70,11 @@ def regime(row: Dict[str, Any]) -> str:
 
 
 def temporal_split(rows: Sequence[Dict[str, Any]], train_ratio: float = 0.70, embargo_ratio: float = 0.02):
+    """Discovery/holdout split with a small embargo around the cut.
+
+    This is still observational evidence from already-generated signals. It is
+    deliberately NOT labelled as a causal candle-by-candle backtest.
+    """
     ordered = sorted(rows, key=lambda r: str(r.get("created_at") or ""))
     n = len(ordered)
     if n < 3:
@@ -119,7 +124,8 @@ def summarize(rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
             mae_values.append(mae)
     positives = sum(v for v in rs if v > 0)
     negatives = abs(sum(v for v in rs if v < 0))
-    pf = (positives / negatives) if negatives > 1e-12 else (999.0 if positives > 0 else None)
+    pf_degenerate = bool(rs and negatives <= 1e-12 and positives > 0)
+    pf = (positives / negatives) if negatives > 1e-12 else None
     return {
         "n_rows": len(rows),
         "resolved": len(rs),
@@ -128,6 +134,7 @@ def summarize(rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         "win_rate_pct": round(wins / len(rs) * 100.0, 2) if rs else None,
         "expectancy_r": round(sum(rs) / len(rs), 5) if rs else None,
         "profit_factor": round(pf, 4) if pf is not None else None,
+        "profit_factor_degenerate": pf_degenerate,
         "max_drawdown_r": round(_max_drawdown(rs), 4) if rs else None,
         "avg_mfe_r": round(sum(mfe_values)/len(mfe_values), 4) if mfe_values else None,
         "avg_mae_r": round(sum(mae_values)/len(mae_values), 4) if mae_values else None,
@@ -139,22 +146,75 @@ def summarize(rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def walk_forward_summary(rows: Sequence[Dict[str, Any]], folds: int = 3, embargo_ratio: float = 0.02) -> Dict[str, Any]:
+    """Expanding-window temporal checks over already-generated signals.
+
+    This is a stability diagnostic. It does not convert attribution data into a
+    causal historical replay, but it prevents one lucky terminal holdout from
+    being treated as sufficient evidence.
+    """
+    ordered = sorted(rows, key=lambda r: str(r.get("created_at") or ""))
+    n = len(ordered)
+    if n < max(12, folds * 4):
+        return {"folds": [], "valid_folds": 0, "positive_folds": 0, "positive_fold_ratio": None}
+    fold_size = max(2, n // (folds + 1))
+    embargo = max(1, int(n * embargo_ratio)) if n >= 25 else 0
+    outputs = []
+    for fold in range(folds):
+        train_end = fold_size * (fold + 1)
+        val_start = min(n, train_end + embargo)
+        val_end = min(n, val_start + fold_size)
+        if val_end - val_start < 2:
+            continue
+        train = ordered[:max(1, train_end - embargo)]
+        validation = ordered[val_start:val_end]
+        outputs.append({
+            "fold": fold + 1,
+            "discovery": summarize(train),
+            "holdout": summarize(validation),
+        })
+    valid = [f for f in outputs if int((f.get("holdout") or {}).get("resolved") or 0) > 0]
+    positive = [f for f in valid if num((f.get("holdout") or {}).get("expectancy_r"), -999.0) > 0]
+    return {
+        "folds": outputs,
+        "valid_folds": len(valid),
+        "positive_folds": len(positive),
+        "positive_fold_ratio": round(len(positive) / len(valid), 4) if valid else None,
+    }
+
+
 def summarize_oos(rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     train, validation = temporal_split(rows)
-    return {"all": summarize(rows), "train": summarize(train), "validation": summarize(validation)}
+    return {
+        "all": summarize(rows),
+        "train": summarize(train),
+        "validation": summarize(validation),
+        "walk_forward": walk_forward_summary(rows),
+        "methodology": {
+            "evidence_type": "OBSERVATIONAL_ATTRIBUTION",
+            "discovery_label": "DISCOVERY",
+            "validation_label": "TEMPORAL_HOLDOUT",
+            "causal_candle_replay": False,
+        },
+    }
 
 
 def evidence_stage(summary: Dict[str, Any]) -> str:
     allm = summary.get("all") or {}
     val = summary.get("validation") or {}
+    wf = summary.get("walk_forward") or {}
     n = int(allm.get("resolved") or 0)
     vn = int(val.get("resolved") or 0)
     vexp = num(val.get("expectancy_r"))
     vpf = num(val.get("profit_factor"))
+    degenerate = bool(val.get("profit_factor_degenerate"))
+    valid_folds = int(wf.get("valid_folds") or 0)
+    positive_ratio = num(wf.get("positive_fold_ratio"))
     if vn >= 10 and vexp is not None and vexp <= -0.20:
-        return "DEGRADED_OOS"
-    if n >= 25 and vn >= 10 and vexp is not None and vexp > 0.05 and (vpf is None or vpf > 1.10):
-        return "PROMISING_OOS"
+        return "DEGRADED_HOLDOUT"
+    stable = valid_folds >= 2 and positive_ratio is not None and positive_ratio >= 0.67
+    if n >= 25 and vn >= 10 and vexp is not None and vexp > 0.05 and not degenerate and vpf is not None and vpf > 1.10 and stable:
+        return "PROMISING_HOLDOUT"
     if n >= 10:
-        return "NEEDS_OOS"
+        return "NEEDS_HOLDOUT"
     return "INSUFFICIENT"

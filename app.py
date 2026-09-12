@@ -1,5 +1,7 @@
 from __future__ import annotations
 import gc
+import hashlib
+import json
 import os
 import threading
 import time
@@ -34,14 +36,28 @@ def _auth_ok() -> bool:
 
 
 def _source_rows(days: int, max_rows: int):
-    return central.paged_select(
+    # Read the newest bounded window first.  The old ASC+limit behaviour could
+    # keep the oldest rows forever once the table grew beyond max_rows.
+    rows = central.paged_select(
         'analytics_quality_v2_compact_v1',
         params={
             'select': 'id,symbol,timeframe,system_type,action_normalized,status,created_at,entry_price,stop_loss,take_profit,risk_reward,context,signal_results',
             'created_at': f'gte.{since_iso(days)}',
-            'order': 'created_at.asc',
+            'order': 'created_at.desc',
         }, max_rows=max_rows, page_size=config.PAGE_SIZE,
     )
+    rows.reverse()
+    return rows
+
+
+def _dataset_fingerprint(rows) -> str:
+    h = hashlib.sha256()
+    for row in rows or []:
+        h.update(str(row.get('id') or '').encode('utf-8'))
+        h.update(b'|')
+        h.update(str(row.get('created_at') or '').encode('utf-8'))
+        h.update(b'\n')
+    return h.hexdigest()[:24]
 
 
 def _record_run(run_id: str, status: str, **extra):
@@ -71,19 +87,45 @@ def _heartbeat(**extra):
         print(f'⚠️ heartbeat persistence: {exc}', flush=True)
 
 
-def _persist_findings(findings):
-    if not findings:
-        return
+def _persist_findings(findings, run_id: str, dataset_fingerprint: str):
     rows=[]
-    for item in findings:
+    current_keys=set()
+    for item in findings or []:
+        meta=dict(item.get('meta') or {})
+        meta.update({
+            'is_current': True,
+            'research_run_id': run_id,
+            'dataset_fingerprint': dataset_fingerprint,
+        })
+        feature_key=item['feature_key']
+        current_keys.add(feature_key)
         rows.append({
             'engine': item['engine'], 'experiment': item['experiment'],
-            'feature_key': item['feature_key'], 'scope': item.get('scope') or {},
+            'feature_key': feature_key, 'scope': item.get('scope') or {},
             'stage': item.get('stage') or 'INSUFFICIENT', 'authority': 'RESEARCH_ONLY',
-            'metrics': item.get('metrics') or {}, 'meta': item.get('meta') or {},
+            'metrics': item.get('metrics') or {}, 'meta': meta,
             'research_version': config.VERSION, 'updated_at': utc_now(),
         })
-    central.upsert('research_findings_v1', rows, on_conflict='feature_key')
+    if rows:
+        central.upsert('research_findings_v1', rows, on_conflict='feature_key')
+
+    # Invalidate findings from previous runs of this same engine. Validation
+    # must never promote a candidate that vanished from the latest evidence.
+    try:
+        previous=central.select('research_findings_v1', params={
+            'select':'feature_key,meta,research_version',
+            'engine':f'eq.{config.ENGINE}',
+            'limit':'500',
+        })
+        for old in previous:
+            key=str(old.get('feature_key') or '')
+            if not key or key in current_keys:
+                continue
+            meta=dict(old.get('meta') or {})
+            meta.update({'is_current':False,'stale_after_run_id':run_id})
+            central.patch('research_findings_v1', {'stage':'STALE','meta':meta,'updated_at':utc_now()}, filters={'feature_key':f'eq.{key}'})
+    except Exception as exc:
+        print(f'⚠️ stale findings: {exc}', flush=True)
 
 
 
@@ -91,20 +133,23 @@ def _persist_findings(findings):
 def _dashboard_rows():
     """Small read-only payload for the browser. Never loads source trading rows."""
     limit = int(getattr(config, 'DASHBOARD_MAX_ROWS', 120))
+    fetch_limit = min(500, max(limit * 3, limit))
     if config.ENGINE == 'validation':
-        rows = central.select('research_promotions_v1', params={
+        raw = central.select('research_promotions_v1', params={
             'select': 'candidate_key,source_engine,experiment,stage,reason,scope,metrics,meta,research_version,updated_at',
+            'research_version': f'eq.{config.VERSION}',
             'order': 'updated_at.desc',
-            'limit': str(limit),
+            'limit': str(fetch_limit),
         })
     else:
-        rows = central.select('research_findings_v1', params={
+        raw = central.select('research_findings_v1', params={
             'select': 'feature_key,engine,experiment,stage,scope,metrics,meta,research_version,updated_at',
             'engine': f'eq.{config.ENGINE}',
+            'research_version': f'eq.{config.VERSION}',
             'order': 'updated_at.desc',
-            'limit': str(limit),
+            'limit': str(fetch_limit),
         })
-    return rows
+    return [r for r in raw if (r.get('meta') or {}).get('is_current') is True][:limit]
 
 
 def _compact_metric(row):
@@ -137,23 +182,46 @@ def _markdown_report(items):
     title = f'Research Federation · {config.ENGINE.upper()} · {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}'
     lines=[f'# {title}', '', f'- Versión: {config.VERSION}', f'- Autoridad: RESEARCH_ONLY', f'- RSS actual: {rss_mb():.1f} MB', f'- Elementos mostrados: {len(items)}', '']
     ordered=sorted(items, key=lambda x: ((x.get('validation_expectancy_r') is not None), x.get('validation_expectancy_r') or -999, x.get('validation_n') or 0), reverse=True)
-    lines.append('## Evidencia principal')
+    lines.append('## Evidencia principal · Discovery / Holdout temporal')
+    lines.append('> Nota: RF V1.3 mide atribución observacional. No presenta estas filas como replay causal de velas.')
     for it in ordered[:20]:
         scope=', '.join(f'{k}={v}' for k,v in (it.get('scope') or {}).items())
-        lines.append(f"- {it.get('stage')} | {it.get('experiment')} | {scope} | N={it.get('resolved')} | Val.N={it.get('validation_n')} | Exp.R={it.get('expectancy_r')} | Val.Exp.R={it.get('validation_expectancy_r')} | PF.Val={it.get('validation_profit_factor')}")
+        lines.append(f"- {it.get('stage')} | {it.get('experiment')} | {scope} | Discovery.N={it.get('resolved')} | Holdout.N={it.get('validation_n')} | Discovery.Exp.R={it.get('expectancy_r')} | Holdout.Exp.R={it.get('validation_expectancy_r')} | PF.Holdout={it.get('validation_profit_factor')}")
     if config.ENGINE == 'validation':
         lines += ['', '## Nota de gobernanza', 'Validation sólo clasifica evidencia y recomienda Shadow/Canary. No concede autoridad de producción ni garantiza rentabilidad futura.']
     return '\n'.join(lines)
 
 
-def _run_validation():
-    rows = central.paged_select('research_findings_v1', params={
+def _run_validation(run_id: str):
+    raw = central.paged_select('research_findings_v1', params={
         'select':'engine,experiment,feature_key,scope,stage,metrics,meta,research_version,updated_at',
+        'research_version':f'eq.{config.VERSION}',
         'order':'updated_at.desc',
     }, max_rows=3000, page_size=500)
+    rows=[r for r in raw if (r.get('meta') or {}).get('is_current') is True and str(r.get('stage') or '')!='STALE']
     promotions = _engine.analyze_findings(rows)
+    current_keys={str(p.get('candidate_key') or '') for p in promotions}
+    for p in promotions:
+        meta=dict(p.get('meta') or {})
+        meta.update({'is_current':True,'validation_run_id':run_id})
+        p['meta']=meta
     if promotions:
         central.upsert('research_promotions_v1', promotions, on_conflict='candidate_key')
+    try:
+        old=central.select('research_promotions_v1', params={
+            'select':'candidate_key,meta,research_version',
+            'research_version':f'eq.{config.VERSION}',
+            'limit':'500',
+        })
+        for item in old:
+            key=str(item.get('candidate_key') or '')
+            if not key or key in current_keys:
+                continue
+            meta=dict(item.get('meta') or {})
+            meta.update({'is_current':False,'stale_after_validation_run_id':run_id})
+            central.patch('research_promotions_v1', {'stage':'STALE','meta':meta,'updated_at':utc_now()}, filters={'candidate_key':f'eq.{key}'})
+    except Exception as exc:
+        print(f'⚠️ stale promotions: {exc}', flush=True)
     return len(rows), len(promotions)
 
 
@@ -167,15 +235,16 @@ def _run_job(days: int, max_rows: int):
             if rss_mb() >= config.MEMORY_HARD_MB:
                 raise MemoryError(f'preflight RSS {rss_mb():.1f}MB >= {config.MEMORY_HARD_MB}MB')
             if config.ENGINE == 'validation':
-                source_count, finding_count = _run_validation()
+                source_count, finding_count = _run_validation(run_id)
             else:
                 rows = _source_rows(days, max_rows)
                 source_count = len(rows)
                 if rss_mb() >= config.MEMORY_HARD_MB:
                     raise MemoryError(f'RSS after source {rss_mb():.1f}MB >= {config.MEMORY_HARD_MB}MB')
+                fingerprint = _dataset_fingerprint(rows)
                 findings = _engine.analyze(rows)
                 finding_count = len(findings)
-                _persist_findings(findings)
+                _persist_findings(findings, run_id, fingerprint)
                 del rows, findings
             try:
                 central.rpc('cleanup_research_federation_v1', {})
@@ -270,7 +339,12 @@ def export_summary():
 
 
 def _auto_loop():
-    time.sleep(config.BOOT_DELAY_SECONDS)
+    # Validation starts later so the four evidence engines can publish their
+    # current RF V1.3 snapshot first after a simultaneous Render deploy.
+    initial_delay = config.BOOT_DELAY_SECONDS
+    if config.ENGINE == 'validation':
+        initial_delay = max(initial_delay, 180)
+    time.sleep(initial_delay)
     while True:
         try:
             if not _state['running']:
