@@ -1,0 +1,285 @@
+ó
+    Hf¤j'.  ã            	      óè  • S SK Jr  S SKrS SKrS SKrS SKrS SKrS SK r S SKJrJ	r	  S SK
+J
+r
+JrJ
+r
+JrJr  S SKrS SKJrJrJr  S SKJr  S S KJr  \
+" \5      r\" \R6                  \R8                  5      r\" \R<                  \R>                  5      r \RB                  " \RD                  5      r#\RH                  " 5       r%\RH                  " 5       r&SSSSSS S S	S
+.r'S'S
+ jr(S(S jr)S)S
+ jr*S r+S r,S r-S r.S r/S r0S(S jr1S*S jr2\RC                  S5      S 5       r3\RC                  S5      S 5       r4\Rk                  S5      S 5       r6\RC                  S5      S 5       r7\RC                  S5      S 5       r8\RC                  S 5      S! 5       r9S" r:\RD                  \Rv                  ;  a  \<" S#\RD                   35      e\Rz                  (       a!  \R|                  " \:S$S%S&9R                  5         gg)+é    )Ú
+annotationsN)ÚdatetimeÚtimezone)ÚFlaskÚ jsonifyÚ requestÚrender_templateÚResponse)ÚRestDBÚ	since_isoÚ utc_now)Ú ENGINES)Úrss_mbFg        )Ú runningÚlast_started_atÚlast_finished_atÚ
+last_errorÚ
+last_run_idÚlast_source_rowsÚ
+last_findingsÚ
+last_rss_mbc                 óð   • [         R                  (       d  g[        R                  R	                  S5      =(       d(    [        R
+                  R	                  S5      =(       d    Sn U [         R                  :H  $ )NTzX-Research-TokenÚtokenÚ )ÚconfigÚ	RUN_TOKENr   Ú headersÚgetÚargs)Úsupplieds    Ú/mnt/data/rfv12_work/app.pyÚ_auth_okr"      sN   € Ü
+×
+×
+ØÜ‰×"Ñ"Ð#5Ó6×Y¼'¿,¹,×:JÑ:JÈ7Ó:S×YÐWY€HØ
+”v×'Ñ'Ñ
+'Ð'ó    c                ój   • [         R                  SSS[        U 5       3SS.U[        R                  S9$ ) NÚanalytics_quality_v2_compact_v1zˆid,symbol,timeframe,system_type,action_normalized,status,created_at,entry_price,stop_loss,take_profit,risk_reward,context,signal_resultszgte.zcreated_at.asc)ÚselectÚ
+created_atÚorder©ÚparamsÚmax_rowsÚ	page_size)Ú centralÚpaged_selectr   r   Ú	PAGE_SIZE©Údaysr+   s     r!   Ú_source_rowsr2   $   sG   € Ü
+×
+Ñ
+Ø)ð aØ ¤¨4£Ð 1Ð2Ø%ñ 
+ð ¬×(8Ñ(8ð
+  ð  ð  r#   c               
+  óÔ   • U [         R                  U[         R                  [         5       US.n [        R
+                  SU/SS9  g ! [          a  n[        SU 3SS 9   S nAg S nAff = f)N)Úrun_idÚengineÚstatusÚresearch_versionÚ
+updated_atÚmetaÚresearch_runs_v1r4   ©Ú
+on_conflictu   âš ï¸ run persistence: T©Úflush)r   ÚENGINEÚ VERSIONr
+   Ú privateÚupsertÚ	ExceptionÚprint)r4   r6   ÚextraÚrowÚexcs        r!   Ú
+_record_runrH   /   s^   € à¤F§M¡M¸VÜ"ŸN™N¼'»)Øñ 
+€Cð
+<Ü‰Ð)¨C¨5¸hˆÒGøÜ
+ó <Ü
+Ð(¨¨Ð.°d×;ûð<ús   ¯A Á
+A'Á
+A"Á"A'c               
+  ó  • [         R                  [         R                  [         5       [        S   (       a  SOS[
+        [
+        5       S5      U S.n [        R                  SU/S S9  g ! [          a  n[        S	U 3S
+S
+9   S nAg S nAff = f)Nr   Ú RUNNINGÚIDLEé   )r5   r7   Úlast_seen_atr6   r   r9   Úresearch_engine_state_v1r5   r;   u   âš ï¸ heartbeat persistence: Tr=   )
+r   r?   r@   r
+   Ú_stateÚroundr   rA   rB   rC   rD   )rE   rF   rG   s      r!   Ú
+_heartbeatrQ   ;   sv   € ä—-‘-Ü"ŸN™NÜ›	Ü% i×0‘)°fÜœ› !Ó$Øñ
+ 
+€CðBÜ‰Ð1°C°5ÀhˆÒOøÜ
+ó BÜ
+Ð.¨s¨eÐ4¸D×AûðBús   ÁA( Á(
+B	Á2
+BÂB	c                óŠ  • U (       d  g / nU  Hž  nUR                  US   US   US   UR                  S5      =(       d    0 UR                  S5      =(       d    SS UR                  S5      =(       d    0 UR                  S	5      =(       d    0 [        R                  [	        5       S
+.
+5        M   
+   [
+        R
+                  S
+USS9  g )
+Nr5   Ú
+experimentÚ
+feature_keyÚscopeÚstageÚINSUFFICIENTÚ
+RESEARCH_ONLYÚ metricsr9   )
+r5   rS   rT   rU   rV   Ú	authorityrY   r9   r7   r8   Úresearch_findings_v1r;   ) Úappendr   r   r@   r
+   r-   rB   )ÚfindingsÚrowsÚitems      r!   Ú_persist_findingsr`   J   s¢   € Þ
+ØØ	
+€DÛˆØ
+‰
+Ø˜8‘n°D¸Ñ4FØ 
+Ñ.¸¿¹À'Ó9J×9PÈbØ—X‘X˜gÓ&×8¨.ÀØ—x‘x 	Ó*×0¨b¸$¿(¹(À6Ó:J×:PÈbÜ &§¡¼g»iñ
+
+ö 	
+ñ ô ‡NNÐ)¨4¸]€NÒKr#   c            	     ó  • [        [        [        SS5      5      n [        R                  S:X  a#  [        R
+                  SSS[
+        U 5      S .S9nU$ [        R
+                  S	S
+S
+[        R                   3S[
+        U 5      S.S9nU$ )
+zISmall read-only payload for the browser. Never loads source trading rows.ÚDASHBOARD_MAX_ROWSéx   Ú
+validationÚresearch_promotions_v1zbcandidate_key,source_engine,experiment,stage,reason,scope,metrics,meta,research_version,updated_atúupdated_at.desc)r&   r(   Úlimit)r*   r[   zRfeature_key,engine,experiment,stage,scope,metrics,meta,research_version,updated_atzeq.)r&   r5   r(   rg   ) ÚintÚ getattrr   r?   r-   r&   Ústr)rg   r^   s     r!   Ú_dashboard_rowsrk   [   s‹   € ä” œÐ 4°cÓ:Ó;€EÜ 
+‡}}˜Ó $Ü~‰~Ð6ØzØ&Ü˜“Zñ @
+ˆ~ð 
+ˆð €Kô
+ ~‰~Ð4ØjØœFŸM™M˜?Ð+Ø&Ü˜“Zñ	>
+ˆ~ð 
+ˆð €Kr#   c                ó  • U R                  S5      =(       d    0 nUR                  S5      =(       d    0 nUR                  S5      =(       d    0 n0 SU R                  S5      =(       d    U R                  S5      _S U R                  S5      =(       d(    U R                  S 5      =(       d    [        R                  _S	U R                  S	5      _S
+U R                  S
+5      _S
+U R                  S
+5      _SU R                  S5      =(       d    0 _S
+UR                  S
+5      _SUR                  S5      _SUR                  S5      _SUR                  S5      _SUR                  S
+5      _SUR                  S5      _SUR                  S5      _SUR                  S5      _SUR                  S5      =(       d    / _SUR                  S5      =(       d    / _SU R                  S5      =(       d    0 _SU R                  S5      0E$ )NrY   Úallrd   ÚkeyÚ
+candidate_keyrT   r5   Ú
+source_enginerS   rV   ÚreasonrU   ÚresolvedÚexpectancy_rÚ
+profit_factorÚ
+drawdown_rÚmax_drawdown_rÚvalidation_nÚvalidation_expectancy_rÚvalidation_profit_factorÚnet_evidence_pctÚ symbolsÚ
+timeframesr9   r8   )r   r   r?   )rF   rY   ÚallmÚvals       r!   Ú_compact_metricr   n   sõ  € Øg‰giÓ ×& B€GØ
+;‰;uÓ
+×
+# €DØ
++‰+lÓ
+#×
+) r€CðØ
+ˆsw‰wÓ'×A¨3¯7©7°=Ó+Aðà#—'‘'˜/Ó*×P¨c¯g©g°hÓ.?×PÄ6Ç=Á=ðð 	c—g‘g˜lÓ+ð ð 	—‘˜Ó!ð	ð
+ 	#—'‘'˜(Ó#ð
+ð 	—‘˜Ó!×' Rð
+ð 	D—H‘H˜ZÓ(ðð 	˜Ÿ™ Ó0ðð 	˜Ÿ™ /Ó2ðð 	d—h‘hÐ/Ó0ðð 	˜Ÿ ™  
+Ó+ðð 	" 3§7¡7¨>Ó#:ðð 	# C§G¡G¨OÓ$<ðð 	˜DŸH™HÐ%7Ó8ðð 	4—8‘8˜IÓ&×,¨"ðð  	d—h‘h˜|Ó,×2°ð!ð" 	— ‘ ˜“×% 2ð#ð$ 	c—g‘g˜lÓ+ñ%ð r#   c                ób  • S[         R                  R                  5        S[        R                  " [
+        R                  5      R                  S5       3nSU 3SS[         R                   3S S[        5       S	 S
+3S
+[        U 5       3S/ n[        U S S
+S9nUR                  S5        US S  HÓ  nSR                  S UR                  S5      =(       d    0 R                  5        5       5      nUR                  SUR                  S5       SUR                  S5       SU SUR                  S5       SUR                  S5       SUR                  S5       SUR                  S5       S UR                  S!5       35        MÕ  
+   [         R                  S":X  a   U/ S#Q-
+  nS$R                  U5      $ )%Nu   Research Federation Â· u    Â· z%Y-%m-%d %H:%M UTCz# r   u   - VersiÃ³n: z- Autoridad: RESEARCH_ONLYz- RSS actual: ú.1fz MBz- Elementos mostrados: c                óŽ   • U R                  S5      S LU R                  S5      =(       d    SU R                  S5      =(       d    S4$ )Nrx   iüÿÿrw   r   )r   )Úxs    r!   Ú<lambda>Ú"_markdown_report.<locals>.<lambda>‹   sh   € ¨!¯%©%Ð0IÓ*JÐRVÐ*VÐYZ×Y^ÑY^Ð_xÓYy÷  ZBð  ~Bð  DE÷  DIñ  DIð  JXó  DY÷  D^ð  ]^ñ  )_r#   T)rn   Ú reversez## Evidencia principalé   z, c              3  ó4   #   • U  H  u  pU S U 3v •  M  
+   g7f)Ú=N© )Ú.0ÚkÚvs      r!   Ú	<genexpr>Ú#_markdown_report.<locals>.<genexpr>Ž   s   é € ÐNÒ.M¡s q˜1˜#˜Q˜q˜c
+Ò.Mùs   ‚rU   z- rV   z | rS   z | N=rr   z	 | Val.N=rw   z	 | Exp.R=rs   z
+ | Val.Exp.R=rx   z
+ | PF.Val=ry   rd   )r   z## Nota de gobernanzau†   Validation sÃ³lo clasifica evidencia y recomienda Shadow/Canary. No concede autoridad de producciÃ³n ni garantiza rentabilidad futura.Ú
+)r   r?   Úupperr   Únowr   ÚutcÚstrftimer@   r   ÚlenÚsortedr\   Újoinr   Úitems)r˜   ÚtitleÚlinesÚ orderedÚitrU   s         r!   Ú_markdown_reportr   ˆ   s5  € Ø%¤f§m¡m×&9Ñ&9Ó&;Ð%<¸DÄÇÂÌhÏlÉlÓA[×AdÑAdÐeyÓAzÐ@{Ð|€EØ
+ˆwˆ<˜˜|¬F¯N©NÐ+;Ð<Ð@ZÐ_mÔntÓnvÐwzÐm{Ð{~Ð]ð  D[ô  \_ð  `eó  \fð  [gð  Bhð  jlð  
+m€EÜ5ñ  _ð  imñ  
+n€GØ	‡LLÐ)Ô*Øcr‹lˆØi‰iÑN¨r¯v©v°g«×/DÀ"×.KÑ.KÔ.MÓNÓNˆØ
+‰r˜"Ÿ&™& ›/Ð*¨#¨b¯f©f°\Ó.BÐ-CÀ3ÀuÀgÈUÐSU×SYÑSYÐZdÓSeÐRfÐfoÐpr×pvÑpvð  xFó  qGð  pHð  HQð  RT÷  RXñ  RXð  Ygó  Rhð  Qið  ivð  wy÷  w}ñ  w}ð  ~Wó  wXð  vYð  Ycð  df÷  djñ  djð  kEó  dFð  cGð  Hö  	Iñ ô ‡}}˜Ó $Ø
+ò  yñ  	yˆØ
+9‰9UÓ
+Ðr#   c                  óÂ   • [         R                  SSSS.SSS 9n [        R                   U 5      nU(       a  [         R	                  SUS	S
+9  [
+        U 5      [
+        U5      4$ )
+Nr[   zRengine,experiment,feature_key,scope,stage,metrics,meta,research_version,updated_atrf   )r&   r(   i¸
+  éô  r)   re   ro   r;   )r-   r.   Ú _engineÚanalyze_findingsrB   r•   )r^   Ú
+promotionss     r!   Ú_run_validationr£   •   sh   € Ü
+×
+Ñ
+Ð 6ØeØ!ñ@ð  ð   ð %€Dô ×)Ñ)¨$Ó/€JÞ Ü‰Ð/°ÈˆÑYÜ
+ˆt‹9”c˜*“oÐ
+%Ð%r#   c                óº  • [        [        R                  " 5       5      n[           [        R
+                  S[
+        5       S US9  [        USXS9  [        S[        R                   SUS S   S[        5       S	 S
+3 SS
+9   [        5       [        R                  :¼  a)  [        S[        5       S	 S
+[        R                   S
+35      e[        R                  S:X  a
+  [        5       u  p4Oˆ[        X5      n[!        U5      n[        5       [        R                  :¼  a)  [        S[        5       S	 S
+[        R                   S
+35      e["        R%                  U5      n[!        U5      n['        U5        AA [(        R+                  S0 5        [        R
+                  X4[
+        5       S9  [        USX4[/        [        5       S5      S9  [        S[        R                   SU SU S[        5       S	 S
+3	SS
+9  S![        S"'   [8        R:                  " 5         [/        [        5       S5      [        S#'   [=        U[        R?                  S5      S$9   S S S 5        g ! [,          a     NÔf = f! [,          a‰  n [1        U 5      R2                   SU  3[        S'   [
+        5       [        S'   [        US[        S   S9  [        S[        R                   S[        S    S [4        R6                  " 5        3SS
+9   S n A NþS n A ff = f! S![        S"'   [8        R:                  " 5         [/        [        5       S5      [        S#'   [=        U[        R?                  S5      S$9  f = f! , (       d  f       g = f)%NT)r   r   r   r   rJ   r0   u   ðŸ”¬ [z] run=é   z inicio rss=r   ÚMBr=   zpreflight RSS zMB >= rd   zRSS after source Úcleanup_research_federation_v1)r   r   r   Ú SUCCESSrL   )Ú
+source_rowsr]   r   u   âœ… [z	] source=z
+ findings=z rss=ú: r   r   ÚERROR)Úerroru   âŒ [z] r   Fr   r   )r   r   ) rj   ÚuuidÚuuid4Ú	_job_lockrO   Úupdater
+   rH   rD   r   r?   r   ÚMEMORY_HARD_MBÚ
+MemoryErrorr£   r2   r•   r    Ú analyzer`   r-   ÚrpcrC   rP   ÚtypeÚ__name__Ú	tracebackÚ
+format_excÚgcÚ collectrQ   r   )r1   r+   r4   Úsource_countÚ
+finding_countr^   r]   rG   s           r!   Ú_run_jobr½       sÂ  € Ü
+”—’“Ó
+€FÞ	Ü
+‰
+˜d´G³IÈ$Ð\bˆ
+ÑcÜF˜I¨DÒDÜ
+”v—}‘}o V¨F°2°A¨J¨<°|ÄFÃHÈSÀ>ÐQSÐTÐ\`Òað	PÜ‹xœ6×0Ñ0Ó0Ü! N´6³8¸C°.ÀÄv×G\ÑG\ÐF]Ð]_Ð"`ÓaÐaÜ}‰} Ó,Ü.=Ó.?Ñ+˜mä# DÓ3Ü" 4›yÜ“8œv×4Ñ4Ó4Ü%Ð(9¼&»(À3¸ÀvÌf×NcÑNcÐMdÐdfÐ&gÓhÐhÜ"Ÿ?™?¨4Ó0Ü # H£
+
+Ü! (Ô+Ø˜(ð
+Ü—
+‘
+Ð<¸bÔAô 
+M‰M¨<ÔgnÓgpˆMÑqÜ˜ 	°|ÔdiÔjpÓjrÐstÓduÒvÜEœ&Ÿ-™-˜¨	°,°¸zÈ-ÈÐX]Ô^dÓ^fÐgjÐ]kÐkmÐnÐvzÒ{ð !&ŒF9ÑÜJŠJŒLÜ$)¬&«(°1Ó$5ŒF=Ñ!Ü 6´f·j±jÀÓ6NÓO÷E 
+ˆøô( ó 
+Ùð
+ûô
+ ó 	iÜ&*¨3£i×&8Ñ&8Ð%9¸¸C¸5Ð#AŒF<Ñ Ü)0«ŒFÐ%Ñ&Ü˜  ¬v°lÑ/CÒDÜEœ&Ÿ-™-˜¨¬6°,Ñ+?Ð*@ÀÄ9×CWÒCWÓCYÐBZÐ[Ðcg×hûð		iûð !&ŒF9ÑÜJŠJŒLÜ$)¬&«(°1Ó$5ŒF=Ñ!Ü 6´f·j±jÀÓ6NÓOú÷E 
+úsk   ¥AMÁ>C.IÅ-I
+ÆA(IÇ+AMÉ
+
+IÉIÉIÉIÉ
+K.É%A?K)Ë$K1Ë)K.Ë.K1Ë1AM	Í	MÍ
+M c           
+     ó  • [            [        S   (       a
+   S S S 5        gS[        S'   [        S[         S[	        U =(       d    [
+        R                  5      5      5      n [        S[         S [	        U=(       d    [
+        R                  5      5      5      n [        R                  " [        X4S[
+        R                   3SS	9R                  5          S S S 5        g! [          a
+    S[        S'   e f = f! , (       d  f       g = f)
+Nr   FTé   iÚ  éÈ   i N  z	research-)Útargetr   ÚnameÚdaemon)Ú
+_start_lockrO   ÚmaxÚminrh   r   Ú
+WINDOW_DAYSÚMAX_SOURCE_ROWSÚ	threadingÚThreadr½   r?   ÚstartrC   r0   s     r!   Ú
+_start_jobrÌ   Ç   sÏ   € Þ	Ü
+)×
+Ø÷ 
+ˆð !ŒˆyÑÜ2”s˜3¤ D×$>¬F×,>Ñ,>Ó ?Ó@ÓAˆÜsœC ¤s¨8×+M´v×7MÑ7MÓ'NÓOÓPˆð	Ü×Ò¤H°D°?È9ÔU[×UbÑUbÐTcÐIdÐmqÑr×xÑxÔzð ÷ 
+ˆøô ó 	Ø %ŒF9ÑØð	ú÷ 
+ús)   ‡C3 A5C3Â;CÃC3ÃC0Ã0C3Ã3
+D z /healthc            
+     óÌ   • [        S[        R                  [        R                  S[        S   [
+        [
+        5       S5      [        R                  [        R                  S.5      $ )NTrX   r   rL   )Úokr5   Ú versionrZ   r   r   Ú
+central_dbÚ
+private_db)
+r    r   r?   r@   rO   rP   r   r-   ÚreadyrA   rŠ   r#   r!   ÚhealthrÓ   ×   sH   € ä
+ØœfŸm™m¼¿¹Ø$´¸	Ñ1BÜœ› Ó#´7·=±=ÔPW×P]ÑP]ñ ó  ð  r#   z /statusc                  ób   • [        S[        R                  [        [        R                  S.5      $ )NT)rÎ   r5   ÚstaterÏ   )r    r   r?   rO   r@   rŠ   r#   r!   r6   r6   à   s!   € ä
+˜$¬&¯-©-Ä&ÔU[×UcÑUcÑdÓ
+eÐer#   z/runc                  ó0  • [        5       (       d  [        SSS.5      S4$ [        R                  " SS9=(       d    0 n [	        U R
+                  S 5      U R
+                  S5      5      n[        SU[        S	   [        R                  S
+.5      U(       a  S
+4$ S4$ )
+NFÚunauthorized)rÎ   r¬   i‘  T)Úsilentr1   r+   r   )rÎ   Ú startedr   r5   éÊ   rÀ   )	r"   r    r   Úget_jsonrÌ   r   rO   r   r?   )ÚbodyrÙ   s     r!   Ú run_nowrÝ   å   s“   € ä
+:‰:Ü˜U¨>Ñ:Ó;¸SÐ@Ð@Ü
+×
+Ò
+ 4Ñ
+(×
+.¨B€DÜ˜Ÿ™ &Ó)¨4¯8©8°JÓ+?Ó@€GÜ
+˜¨¼FÀ9Ñ<MÔX^×XeÑXeÑfÓ
+gÖqxÐjmð  Cð  Cð  Bð  Cð  Cr#   Ú/c                 óP   • [        S[        R                  [        R                  S9$ )Nzdashboard.html)r5   rÏ   )r	   r   r?   r@   rŠ   r#   r!   Údashboard_pagerà   ï   s   € ä
+Ð+´F·M±MÌ6Ï>É>Ñ
+ZÐZr#   z/api/dashboardc                 óJ  •  [        5       n U  Vs/ s H  n[        U5      PM  
+   nn0 nU H=  n[        UR                   S5      =(       d    S5      nUR                   US5      S-   X5'   M?  
+   [	        S[
+        R                  [
+        R                  S[        [        5       S 5      [        S   X2S	 Vs0 s H  of[        R                   U5      _M  
+   snS
+.	5      $ s  snf s  snf ! [          a5  n [	        S
+[
+        R                  [        U 5      S S S
+.5      S4s S n A $ S n A ff = f)NrV   Ú UNKNOWNr   é   TrX   rL   r   )r   r   r   r   r   )	rÎ   r5   rÏ   rZ   r   r   Ústagesr˜   Úlast_runFéð   )rÎ   r5   r¬   rŸ   )rk   r   rj   r   r    r   r?   r@   rP   r   rO   rC   )r^   Úrr˜   rä   r_   rV   rŒ   rG   s           r!   Ú
+dashboard_apirè   ô   s  € ðXÜÓ ˆÙ-1Ó2ªT¨” Ö#©TˆÐ2ØˆÛˆDÜ˜Ÿ™ Ó)×6¨YÓ7ˆEØ"ŸJ™J u¨aÓ0°1Ñ4ˆF‹Mñ ô Ø¤&§-¡-¼F¿N¹NØ(´E¼&»(À1Ó4EÜ˜iÑ(°Fñ 3Ió  Jò  3I¨Qœ6Ÿ:™: a›=šñ  3Iñ  Jñ	
+ó 
+ð 	
+ùò
+ 3ùò Jøä
+ó XÜ˜U¬F¯M©MÄ#ÀcÃ(È4ÈCÀ.ÑQÓRÐTWÐWÕWûðXús:   ‚C# C¥BC# Â1CÃC# Ã
+C# Ã#
+D"Ã-*DÄD"ÄD"z/api/export/summaryc                  óð   •  [        5        V s/ s H  n [        U 5      PM  
+   nn [        [         U5      SS9$ s  sn f ! [          a.  n[        S[
+        U5      R                   SU 3SSS 9s S nA$ S nAff = f)Nztext/markdown; charset=utf-8)Úmimetypeu   # Error de exportaciÃ³n
+
+rª   rŸ   ztext/plain; charset=utf-8)r6   rê   ) rk   r   r
+   r   rC   rµ   r¶   )rç   r˜   rG   s      r!   Úexport_summaryrë      s…   € ðEÜ+:Ô+<Ó=Ò+< aŒ˜qÖ!Ñ+<ˆÐ=ÜÔ(¨Ó/Ð:XÑYÐYùò >øä
+ó EÜÐ5´d¸3³i×6HÑ6HÐ5IÈÈCÈ5ÐQÐZ]ð  iDñ  Eõ  	EûðEús'   ‚= Ž8£= ¸= ½
+A5Á #A0Á*A5Á0A5c                  ó:  • [         R                  " [        R                  5          [        S   (       d
+  [
+        5         [         R                  " [        R                  S-  5        MB  ! [          a(  n [        S[        R                   SU  3SS9   S n A NVS n A ff = f) NTr   u   âš ï¸ auto-loop rª   r=   é<   )
+ÚtimeÚsleepr   ÚBOOT_DELAY_SECONDSrO   rÌ   rC   rD   r?   ÚAUTO_INTERVAL_MINUTES)rG   s    r!   Ú
+_auto_looprò     sx   € Ü‡J‚JŒv×(Ñ(Ô)Ø
+ð	JÜ˜)×$Ü”ô 	
+
+Š
+”6×/Ñ/°"Ñ4Ô5ñ
+ 
+øô ó 	JÜÐ%¤f§m¡m _°B°s°eÐ<ÀD×Iûð	Jús   §A( Á(
+BÁ2BÂBu   RESEARCH_ENGINE invÃ¡lido: zresearch-auto-loopT)rÁ   rÂ   rÃ   )ÚreturnÚbool)r1   rh   r+   rh   )r4   rj   r6   rj   )NN)@Ú
+__future__r   r¹   ÚosrÉ   rî   r·   r­   r   r   Úflaskr   r    r   r	   r
+   r   Údbr
+   r   r
+   Ú enginesr   Úengines.baser   r¶   ÚappÚ
+CENTRAL_URLÚ
+CENTRAL_KEYr-   Ú
+PRIVATE_URLÚ
+PRIVATE_KEYrA   r   r?   r    ÚLockr¯   rÄ   rO   r"   r2   rH   rQ   r`   rk   r   r   r£   r½   rÌ   rÓ   r6   ÚpostrÝ   rà   rè   rë   rò   Ú
+VALID_ENGINESÚRuntimeErrorÚAUTO_RUNrÊ   rË   rŠ   r#   r!   Ú<module>r     sû  ðÝ "Û 	Û 	Û Û 
+Û Û 
+ß 'ß DÕ Dã 
+ß )Ñ )Ý Ý á
+ˆHƒo€Ù
+×#Ñ# V×%7Ñ%7Ó
+8€ Ù
+×#Ñ# V×%7Ñ%7Ó
+8€ Ø
++Š+f—m‘mÓ
+$€ ØNŠNÓ€	ØnŠnÓ€
+à¨À4Ø tÀØ sñ 
+€ô(ôô	<òBòLò"ò&ò4
+ò&ô$PôN
+ð  ‡ˆÓñ ó ð ð ‡ˆÓñfó ðfð ‡ˆ&ÓñCó ðCð ‡ˆƒñ[ó ð[ð ‡Ð	ÓñXó ðXð$ ‡Ð	ÓñEó  ðEò6ð 
+‡==˜×,Ñ,Ó,Ù
+Ð4°V·]±]°OÐDÓ
+EÐEØ	‡?‡?Ø
+×Ò˜JÐ-AÈ$ÑO×UÑUÕWð r#   

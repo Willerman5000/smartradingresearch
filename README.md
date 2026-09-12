@@ -14,3 +14,7 @@ Motores: `execution`, `risk`, `strategy`, `traders`, `validation`.
 Cada motor muestra tablas y gráficos dibujados en el navegador. El backend sólo devuelve hasta 120 resultados agregados. El botón **Copiar informe para ChatGPT** genera Markdown compacto para pegar en futuros prompts.
 
 Consulta `INSTRUCCIONES_RESEARCH_FEDERATION_V1_1.md`.
+
+
+## V1.2
+Separa temporalidad como dimensión fuerte. PAXG/USDT y PAXG/BTC se estudian como familias Spot independientes; Futures conserva aprendizaje crypto compartido y sólo abre chequeos por símbolo para detectar excepciones. Validation recomienda targets Shadow distintos por timeframe.

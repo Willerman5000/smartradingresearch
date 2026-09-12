@@ -1,0 +1,175 @@
+ó
+    p¤jV  ã                  óÆ   • S SK Jr  S SKrS SKJrJrJrJ r JrJ	r	J
+r
+  SSS jjr
+SS jrSS jr
+SS  jrSS jrSS	 jrSS
+ jrSS
+ jrSSS jjrSS
+ jrSS jrSS jrSS jrg)é    )Ú
+annotationsN) ÚAnyÚDictÚIterableÚListÚOptionalÚSequenceÚTuplec                ó|   •  [        U 5      n[        R                  " U5      (       a  U$ U$ ! [          a    Us $ f = f©N)ÚfloatÚmathÚisfiniteÚ	Exception)ÚvalueÚ defaultÚxs      Ú/mnt/data/rfv12_work/metrics.pyÚnumr      s=   € ðÜ%‹LˆÜ—M’M !×$Ñ$ˆqÐ1¨'Ð1øÜ
+ó ØŠðús   ‚', ª, ¬;º;c                óÚ   • U R                  S5      =(       d    / n[        U[        5      (       a$  U(       a  [        US   [        5      (       a  US   $ [        U[        5      (       a  U$ 0 $ )NÚsignal_resultsr   )ÚgetÚ
+isinstanceÚlistÚdict©ÚrowÚraws     r   Ú
+latest_resultr      sU   € Ø
+
+'‰'Ð"Ó
+#×
+) r€CÜ #”t× Ñ ¦¬°C¸±F¼D×)AÑ)AØ1‰vˆ
+Ü #”t× Ñ Øˆ
+Ø
+
+€Ió    c                óÆ   • [        U 5      n[        UR                  S5      =(       d    U R                  S5      =(       d    S5      R                   5       R	                  5       $ )NÚstatusÚ )r   Ústrr   ÚstripÚlower)r   Úresults     r   Ú
+result_statusr(      sE   € Ü
+˜3Ó
+€FÜ
+ˆvz‰z˜(Ó#×> s§w¡w¨xÓ'8×>¸BÓ
+?×
+EÑ
+EÓ
+G×
+MÑ
+MÓ
+OÐOr    c                ó  • [        U 5      nS H%  n[        UR                  U5      5      nUc  M"  X24s  $ 
+   [         U 5      n[        U R                  S5      S5      =(       d    SnUS;   a  [	        SU5      S4$ US ;   a  gg	)
+z:Return R and evidence source. Never pretends gross is net.)Ú
+modeled_net_rÚ gross_rÚ
+risk_rewardg      ð?>   ÚtpÚtp_hitÚwin_tpÚ
+win_protectedg{®Gáz„?Úgeometry_fallback>   ÚslÚsl_hitÚ loss_sl)g      ð¿r1   )NÚ
+unresolved)r   r   r   r(   Úmax)r   r'   Úkeyr   r"   Úrrs         r   Ú
+realized_rr9      s†   € ä
+˜3Ó
+€FÛ+ˆÜF—J‘J˜s“OÓ$ˆØ
+Ó
+Ø:Òñ  ,ô ˜3Ó
+€FÜ	ˆSW‰W]Ó
+# SÓ	)×	0¨S€BØ 
+Ð<Ó <Ü4˜‹}Ð1Ð1Ð1Ø 
+Ð,Ó ,Ø(Ø
+r    c                óz   • [        U 5      R                  S5      =(       d    0 n[        U[        5      (       a  U$ 0 $ )NÚexecution_forensics)r   r   r   r   r   s     r   Ú	forensicsr<   ,   s4   € Ü
+˜Ó
+×
+ Ñ
+ Ð!6Ó
+7×
+=¸2€CÜ˜S¤$×'Ñ'ˆ3Ð/¨RÐ/r    c                óÊ   • U R                  S5      =(       d    0 n[        U[        5      (       d  0 $ UR                  S5      =(       d    0 n[        U[        5      (       a  U$ 0 $ )NÚ contextÚlearning©r   r   r   ©r   Úctxr   s      r   r?   r?   1   sQ   € Ø
+
+'‰')Ó
+×
+" €CÜ
+cœ4×
+ Ñ
+ Øˆ	ØG‰GJÓ×% 2€EÜ˜u¤d×+Ñ+ˆ5Ð3°Ð3r    c                óÊ   • U R                  S5      =(       d    0 n[        U[        5      (       d  0 $ UR                  S5      =(       d    0 n[        U[        5      (       a  U$ 0 $ )Nr>   Ú	executionr@   rA   s      r   rD   rD   9   sQ   € Ø
+
+'‰')Ó
+×
+" €CÜ
+cœ4×
+ Ñ
+ Øˆ	ØG‰GKÓ ×& B€EÜ˜u¤d×+Ñ+ˆ5Ð3°Ð3r    c                óÖ   • [        U 5      R                  S5      =(       d    0 n[        U[        5      (       a1  [	        UR                  S5      =(       d    S5      R
+                  5       $ g)NÚquantitative_shadowÚregimeÚ UNKNOWN)r?   r   r   r   r$   Úupper)r   Úqs     r   rG   rG   A   sM   € Ü‹
+×ÑÐ/Ó0×6°B€AÜ !”T× Ñ Ü1—5‘5˜“?×/ iÓ0×6Ñ6Ó8Ð8Ø
+r    c           
+     ó$  • [        U S S9n[        U5      nUS:  a
+  [        U5      / 4$ [         S[	        US-
+  [
+        XA-  5      5      5      nUS:¼  a  [         S[
+        XB-  5      5      OSnUS [         SXV-
+  5       n U[	        XEU-   5      S  nXx4$ ) Nc                óH   • [        U R                  S5      =(       d    S5      $ )NÚ
+created_atr#   )r$   r   )Úrs    r   Ú<lambda>Ú temporal_split.<locals>.<lambda>I   s   € ¬¨Q¯U©U°<Ó-@×-FÀBÔ)Gr    )r7   é   é   é   r   )ÚsortedÚlenr   r6   ÚminÚint)	ÚrowsÚ
+train_ratioÚ
+embargo_ratioÚ orderedÚnÚcutÚ embargoÚtrainÚ
+validations	            r   Útemporal_splitra   H   s   € ÜTÑGÑH€GÜ
+ˆG‹€AØ ˆ1ƒuÜG‹}˜bÐ Ð Ü
+
+ˆa”Q˜‘UœC ¡Ó0Ó1Ó
+2€CØ01°R³ Œc!”S˜Ñ*Ó+Ô,¸Q€GØÐ*”S˜˜C™MÓ*Ð+€EØœ˜Q g¡
+Ó.Ð/Ð0€JØ
+Ð
+Ðr    c                ó^   • SnSnSnU  H   nX-
+  n[        X!5      n[        X2U-
+  5      nM"  
+   U$ )Nç        )r6   )ÚvaluesÚequityÚpeakÚmax_ddr   s        r   Ú
+_max_drawdownrh   T   sA   € Ø
+€FØ
+€DØ
+€FÛˆØ‰ˆÜ4Ó ˆÜV F™]Ó+Šñ  ð €Mr    c                óF  • / nS=p#0 n/ n/ n[        5       n [        5       nU  GHr  n	[        U	5      u  p«U
+c  M  UR                  U
+5        UR                   U
+S5      S-   XK'   U[	        U
+S:„  5      -
+  nU[	        U
+S:  5      -
+  nU R
+                  [
+        U	R                   S5      =(       d    S5      5        UR
+                  [
+        U	R                   S5      =(       d    S5      5        [        U	5      n[        UR                   S5      [        [        U	5      R                   S5      5      5      n
+[        UR                   S 5      [        [        U	5      R                   S 5      5      5      nU
+b  UR                  U
+5        Uc  GMa  UR                  U5        GMu  
+   [        S U 5       5      n[        [        S	 U 5       5      5      nUS
+:”  a  UU-
+  O	US:”  a  S
+OS n[        U 5      [        U5      UUU(       a  [        U[        U5      -
+  S-  S
+5      OS U(       a!  [        [        U5      [        U5      -
+  S5      OS Ub  [        US5      OS U(       a  [        [        U5      S5      OS U(       a!  [        [        U5      [        U5      -
+  S5      OS U(       a!  [        [        U5      [        U5      -
+  S5      OS [        U 5      [        U5      U[	        UR                   SS5      5      U(       a-  [        UR                   SS5      [        U5      -
+  S-  S
+5      S.$ SS.$ )Nr   rR   ÚsymbolrH   Ú	timeframeÚmfe_rÚmae_rc              3  ó4   #   • U  H  oS :”  d  M
+  Uv •  M  
+   g7f©r   N© ©Ú.0Úvs     r   Ú	<genexpr>Úsummarize.<locals>.<genexpr>x   s   é € Ð+šr˜!¨¡U—A‘Ašrùó   ‚		c              3  ó4   #   • U  H  oS :  d  M
+  Uv •  M  
+   g7fro   rp   rq   s     r   rt   ru   y   s   é € Ð/¢2˜a¨Q©Ÿ™¢2ùrv   gê-™—q=g     8@g      Y@é   é   é   r*   rc   )Ún_rowsÚresolvedÚwinsÚlossesÚwin_rate_pctÚexpectancy_rÚ
+profit_factorÚmax_drawdown_rÚ	avg_mfe_rÚ	avg_mae_rÚ symbolsÚ
+timeframesÚr_source_countsÚnet_evidence_countÚnet_evidence_pct)Úsetr9   Úappendr   rW   Úaddr$   r<   r   r   ÚsumÚabsrU   Úroundrh   rT   )rX   Úrsr}   r~   Ú
+source_countsÚ
+mfe_valuesÚ
+mae_valuesr…   r†   r   rN   ÚsourceÚfxÚmfeÚmaeÚ	positivesÚ	negativesÚpfs                     r   Ú	summarizer›   _   s¤  € Ø€BØÐ€DØ$&€MØ €JØ €JÜ‹e€GÜ“€JÜˆÜ˜s“O‰	ˆØ
+‰9ÙØ
+	‰	!ŒØ -× 1Ñ 1°&¸!Ó <¸qÑ @ˆ
+ÑØ”A˜‘E“
+ÑˆØ”#a˜!‘e“*ÑˆØ
+‰
+”C˜Ÿ ™  Ó)×6¨YÓ7Ô8Ø‰”s˜3Ÿ7™7 ;Ó/×<°9Ó=Ô>Ü
+s‹^ˆÜ"—&‘&˜“/¤3¤}°SÓ'9×'=Ñ'=¸gÓ'FÓ#GÓHˆÜ"—&‘&˜“/¤3¤}°SÓ'9×'=Ñ'=¸gÓ'FÓ#GÓHˆØ
+‰?Ø×Ñ˜cÔ"Ø
+Œ?Ø×Ñ˜c×"ñ! ô" Ñ+™rÓ+Ó+€IÜ”CÑ/¡2Ó/Ó/Ó0€IØ$-°Ó$5ˆ)iÒ
+ÀYÐQRÃ]¹EÐX\€Bäd“)Ü˜“GØØÞ<>œ˜d¤S¨£W™n¨uÑ4°aÔ8ÀDÞ79œœc "›g¬¨B« Ñ/°Ô3¸tØ)+©œ˜r 1œ¸TÞ9;œ%¤
+¨bÓ 1°1Ô5ÀÞBL”Uœ3˜z›?¬3¨z«?Ñ:¸AÔ>ÐRVÞBL”Uœ3˜z›?¬3¨z«?Ñ:¸AÔ>ÐRVÜ˜'“?Ü˜ZÓ(Ø(Ü! -×"3Ñ"3°OÀQÓ"GÓHÞacœE -×"3Ñ"3°OÀQÓ"GÌ#ÈbË'Ñ"QÐTYÑ"YÐ[\Ó]ñð ð jmñð r    c                ó^   • [        U 5      u  p[        U 5      [        U5      [        U5      S.$ )N)Úallr_   r`   )ra   r›   )rX   r_   r`   s      r   Ú
+summarize_oosrž   Ž   s+   € Ü& tÓ,Ñ€EÜ˜T“?¬Y°uÓ-=ÌYÐWaÓMbÑ
+cÐcr    c                óÌ  • U R                  S5      =(       d    0 nU R                  S5      =(       d    0 n[        UR                  S5      =(       d    S5      n[        UR                  S5      =(       d    S5      n[        UR                  S5      5      n[        UR                  S5      5      nUS :¼  a
+  Ub   US::  a  g	US
+:¼  a  US :¼  a  Ub  US
+:”  a
+  Ub  US:”  a  g
+US :¼  a  gg)Nr   r`   r|   r   r€   r   é
+   gš™™™™™É¿ÚDEGRADED_OOSrS   gš™™™™™©?gš™™™™™ñ?Ú
+PROMISING_OOSÚ	NEEDS_OOSÚINSUFFICIENT)r   rW   r   ) Ú summaryÚallmÚvalr\   ÚvnÚvexpÚvpfs           r   Úevidence_stager«   “   sÈ   € Ø
+;‰;uÓ
+×
+# €DØ
++‰+lÓ
+#×
+) r€CÜ
+ˆDH‰HZÓ ×% AÓ&€AÜ	ˆSW‰WZÓ
+ ×
+% AÓ	&€BÜ
+ˆsw‰w~Ó&Ó
+'€DÜ
+
+ˆcg‰goÓ&Ó
+'€CØ 	ˆRƒxDÑ$¨°«ØØ ˆBƒw2˜“8 Ñ 0°T¸D³[ÀcÁkÐUXÐ[_ÓU_ØØ ˆBƒwØØ
+r    r   )r   r   r   úOptional[float]Úreturnr¬   )r   úDict[str, Any]r­   r®   )r   r®   r­   r$   )r   r®   r­   zTuple[Optional[float], str])gffffffæ?g{®Gáz”?)rX   úSequence[Dict[str, Any]]rY   r
+   rZ   r
+   )rd   zIterable[float]r­   r
+   )rX   r¯   r­   r®   )r¥   r®   r­   r$   )Ú
+__future__r   r   Útypingr   r   r   r    r   r	   r
+   r   r   r(   r9   r<   r?   rD   rG   ra   rh   r›   rž   r«   rp   r    r   Ú<module>r²      sX   ðÝ "Û 
+ß G× GÑ GöôôPô
+
+ô 0ô
+4ô4ôö	ôô,ô^dõ
+
+r    

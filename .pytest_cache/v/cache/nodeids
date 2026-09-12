@@ -1,0 +1,7 @@
+[
+  "tests/test_dashboard_v11.py::test_dashboard_files_exist",
+  "tests/test_dashboard_v11.py::test_no_heavy_frontend_libs",
+  "tests/test_dashboard_v11.py::test_validation_never_active",
+  "tests/test_research_core.py::test_summary_and_features",
+  "tests/test_research_core.py::test_validation_never_production_authority"
+]

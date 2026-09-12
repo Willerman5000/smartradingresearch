@@ -1,0 +1,25 @@
+name: Wake Research Federation
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 */2 * * *'
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Execution
+        run: curl -fsS --max-time 60 -X POST -H "X-Research-Token: ${{ secrets.RESEARCH_RUN_TOKEN }}" -H 'Content-Type: application/json' -d '{}' "${{ secrets.RESEARCH_EXECUTION_URL }}/run" || true
+      - run: sleep 30
+      - name: Risk
+        run: curl -fsS --max-time 60 -X POST -H "X-Research-Token: ${{ secrets.RESEARCH_RUN_TOKEN }}" -H 'Content-Type: application/json' -d '{}' "${{ secrets.RESEARCH_RISK_URL }}/run" || true
+      - run: sleep 30
+      - name: Strategy
+        run: curl -fsS --max-time 60 -X POST -H "X-Research-Token: ${{ secrets.RESEARCH_RUN_TOKEN }}" -H 'Content-Type: application/json' -d '{}' "${{ secrets.RESEARCH_STRATEGY_URL }}/run" || true
+      - run: sleep 30
+      - name: Traders
+        run: curl -fsS --max-time 60 -X POST -H "X-Research-Token: ${{ secrets.RESEARCH_RUN_TOKEN }}" -H 'Content-Type: application/json' -d '{}' "${{ secrets.RESEARCH_TRADERS_URL }}/run" || true
+      - run: sleep 45
+      - name: Validation last
+        run: curl -fsS --max-time 60 -X POST -H "X-Research-Token: ${{ secrets.RESEARCH_RUN_TOKEN }}" -H 'Content-Type: application/json' -d '{}' "${{ secrets.RESEARCH_VALIDATION_URL }}/run" || true

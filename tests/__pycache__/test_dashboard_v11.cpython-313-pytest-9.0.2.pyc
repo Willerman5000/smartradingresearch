@@ -1,0 +1,98 @@
+ó
+    Hf¤j³  ã                   ó<   • S SK rS SKJs  Jr  S SKJ r   S rS r	S r
+g)é    N)ÚPathc                   ó¤  • [        [        5      R                  5       R                  S   n SoU-
+  o"R                  o3" 5       oD(       d¯  SS[
+        R                  " 5       ;   d  [        R                  " U 5      (       a  [        R                  " U 5      OS[        R                  " U5      [        R                  " U5      [        R                  " U5      S.-  n[        [        R                  " U5      5      eS =n=n=p4SoU-
+  o"R                  o3" 5       oD(       d¯  SS[
+        R                  " 5       ;   d  [        R                  " U 5      (       a  [        R                  " U 5      OS[        R                  " U5      [        R                  " U5      [        R                  " U5      S.-  n[        [        R                  " U5      5      eS =n=n=p4g ) Né   útemplates/dashboard.htmlzMassert %(py7)s
+{%(py7)s = %(py5)s
+{%(py5)s = (%(py0)s / %(py2)s).exists
+}()
+}Úroot)Úpy0Úpy2Úpy5Úpy7zstatic/dashboard.js)r   Ú__file__Ú resolveÚ parentsÚexistsÚ@py_builtinsÚlocalsÚ
+@pytest_arÚ_should_repr_global_nameÚ	_safereprÚAssertionErrorÚ_format_explanation)r    Ú
+@py_assert1Ú
+@py_assert3Ú
+@py_assert4Ú
+@py_assert6Ú
+@py_format8s         Ú0/mnt/data/rfv12_work/tests/test_dashboard_v11.pyÚtest_dashboard_files_existr      s  € Ü	
+Œh‹×	Ñ	Ó	!×	)Ñ	)¨!Ñ	,€DØ+Ð5Ð+Ñ+Ð5×
+3Ñ
+3Ð5Ð
+3Ó
+5Ð5Õ
+5×5×5×5×5×5Ñ5ˆD×5×5×5Ñ5ˆD×5×5Õ5Ð+×5×5Ó5Ð
+3×5×5Ó5Ð
+5×5×5×5×5×5Ö5Ø&Ð0Ð&Ñ&Ð0×
+.Ñ
+.Ð0Ð
+.Ó
+0Ð0Õ
+0×0×0×0×0×0Ñ0ˆD×0×0×0Ñ0ˆD×0×0Õ0Ð&×0×0Ó0Ð
+.×0×0Ó0Ð
+0×0×0×0×0×0×0ó    c                   ó²  • [        [        5      R                  5       R                  S   S-
+  R	                  5       n SoU ;   o"(       d¥  [
+        R                  " SU4SX45      [
+        R                  " U5      S[        R                  " 5       ;   d  [
+        R                  " U 5      (       a  [
+        R                  " U 5      OSS .-  nSS	U0-  n[        [
+        R                  " U5      5      eS =pS
+oU ;   o"(       d¥  [
+        R                  " SU4SX45      [
+        R                  " U5      S[        R                  " 5       ;   d  [
+        R                  " U 5      (       a  [
+        R                  " U 5      OSS .-  nSS	U0-  n[        [
+        R                  " U5      5      eS =pS
+oU ;   o"(       d¥  [
+        R                  " SU4SX45      [
+        R                  " U5      S[        R                  " 5       ;   d  [
+        R                  " U 5      (       a  [
+        R                  " U 5      OSS .-  nSS	U0-  n[        [
+        R                  " U5      5      eS =pg )Nr   zengines/validation.pyz'authority': 'RESEARCH_ONLY')Úin)z%(py1)s in %(py3)sÚtext)Úpy1Úpy3zassert %(py5)sr
+   z"production_changes_allowed': FalseÚSHADOW_READY_FAST)
+r   r   r
+   r   Ú	read_textr   Ú_call_reprcomparer   r   r   r   r   r   )r!   Ú
+@py_assert0Ú
+@py_assert2Ú
+@py_format4Ú
+@py_format6s        r   Útest_validation_never_activer+      sE  € Ü
+Œx‹.×
+ Ñ
+ Ó
+"×
+*Ñ
+*¨1Ñ
+-Ð.EÑ
+E×	PÑ	PÓ	R€DØ
+)Ð1¨TÑ
+1×1×1×1Ò1Ð
+)×1×1Ô1Ð
+)×1×1×1×1×1Ô1¨T×1×1×1Ñ1¨T×1×1×1×1×1×1Ó1Ø
+/Ð7°4Ñ
+7×7×7×7Ò7Ð
+/×7×7Ô7Ð
+/×7×7×7×7×7Ô7°4×7×7×7Ñ7°4×7×7×7×7×7×7Ó7Ø
+Ð& $Ñ
+&×&×&×&Ò&Ð
+×&×&Ô&Ð
+×&×&×&×&×&Ô& $×&×&×&Ñ& $×&×&×&×&×&×&Ô&r   c                   óJ  • [        [        5      R                  5       R                  S   n U S-
+  R	                  5       nSo!R
+                  o3" 5       oBU;  oU(       dÏ  [        R                  " SU4SX$45      [        R                  " U5      S[        R                  " 5       ;   d  [        R                  " U5      (       a  [        R                  " U5      OS[        R                  " U5      [        R                  " U5      S .-  nSS	U0-  n [        [        R                  " U 5      5      eS =n=n=p4S
+o!R
+                  o3" 5       oBU;  oU(       dÏ  [        R                  " SU4SX$45      [        R                  " U5      S[        R                  " 5       ;   d  [        R                  " U5      (       a  [        R                  " U5      OS[        R                  " U5      [        R                  " U5      S .-  nSS	U0-  n [        [        R                  " U 5      5      eS =n=n=p4g )
+Nr   r   Úplotly)únot in)zH%(py1)s not in %(py7)s
+{%(py7)s = %(py5)s
+{%(py5)s = %(py3)s.lower
+}()
+}Úhtml)r"   r#   r
+   r
+   zassert %(py9)sÚpy9zchart.js)r   r   r
+   r   r%   Úlowerr   r&   r   r   r   r   r   r   )r    r/   r'   r   r   r(   r   Ú@py_format10s           r   Útest_no_heavy_frontend_libsr3      s1  € Ü	
+Œh‹×	Ñ	Ó	!×	)Ñ	)¨!Ñ	,€DØ
+Ð)Ñ
+)×	4Ñ	4Ó	6€DØ
+Ð'Ÿ:™:Ð'˜:›<Ð'˜<Ñ
+'×'×'×'Ò'ˆ8×'×'Ô'ˆ8×'×'×'×'×'Ô'˜4×'×'×'Ñ'˜4×'×'Õ'˜:×'×'Ó'˜<×'×'×'×'×'×'Õ'Ø
+Ð)ŸZ™ZÐ)˜Z›\Ð)˜\Ñ
+)×)×)×)Ò)ˆ:×)×)Ô)ˆ:×)×)×)×)×)Ô)˜T×)×)×)Ñ)˜T×)×)Õ)˜Z×)×)Ó)˜\×)×)×)×)×)×)Ö)r   )
+Úbuiltinsr   Ú_pytest.assertion.rewriteÚ	assertionÚ rewriter   Ú pathlibr   r   r+   r3   © r   r   Ú<module>r:      s   ðß  „ Õ ò1ò
+'ó*r   

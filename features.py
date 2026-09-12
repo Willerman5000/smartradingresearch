@@ -87,3 +87,23 @@ def trader_items(row: Dict[str, Any]) -> List[Dict[str, Any]]:
     attribution = learning(row).get("strategy_attribution_v2") or {}
     items = attribution.get("items") if isinstance(attribution, dict) else []
     return [x for x in items if isinstance(x, dict)] if isinstance(items, list) else []
+
+
+def market_family(row: Dict[str, Any]) -> str:
+    system_type = str(row.get("system_type") or "").lower()
+    symbol = str(row.get("symbol") or "").upper().replace("/", "-")
+    if system_type == "futures":
+        return "CRYPTO_FUTURES"
+    if symbol in {"PAXG-USDT", "PAXGUSDT"}:
+        return "PAXG_USDT"
+    if symbol in {"PAXG-BTC", "PAXGBTC"}:
+        return "PAXG_BTC"
+    return "CRYPTO_SPOT"
+
+
+def scoped_symbol(row: Dict[str, Any]) -> str:
+    family = market_family(row)
+    symbol = str(row.get("symbol") or "UNKNOWN").upper().replace("/", "-")
+    # PAXG no se mezcla con cripto Spot. Futures comparte edge global y
+    # sólo abre una dimensión por símbolo separada para comprobar excepciones.
+    return symbol if family in {"PAXG_USDT", "PAXG_BTC"} else "ALL_CRYPTO"

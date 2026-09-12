@@ -1,0 +1,144 @@
+ó
+    ¶¤jj  ã                  óŠ   • S SK Jr  S SKJrJrJrJrJ r Jr  S SK	J
+r
+J
+r
+JrJ
+r
+  S rSS jrS
+S jrSS  jrSS jrSS	 jrSS
+ jrg
+)é    )Ú
+annotations)ÚAnyÚDictÚIterableÚListÚSetÚTuple)ÚlearningÚ	executionÚregimeÚnumc                ód   • [        U 5      nUc  g[        X5       H  u  pEX4:  d  M  Us  $ 
+   US   $ )NÚ NO_DATAéÿÿÿÿ)r
+   Úzip)ÚvalueÚcutsÚlabelsÚxÚ	thresholdÚlabels         Ú /mnt/data/rfv12_work/features.pyÚ_bandr      s;   € Ü
+ˆE‹
+€AØ yØÜ Ö-Ñˆ	Ø
+=ØŠLñ .ð "‰:Ðó    c           	     óø  • [        U 5      R                  S5      =(       d    0 n[        U[        5      (       d  0 $ UR                  S5      =(       d    0 n[        U[        5      (       d  0 n[	        UR                  S5      =(       d    S5      R
+                  5       [
+        UR                  S5      SS // SQ5      [
+        UR                  S	5      S
+S
+// SQ5      [
+        UR                  S5      S
+S// SQ5      S.$ )NÚmicrostructure_shadowÚ metricsÚ	alignmentÚ
+UNAVAILABLEÚorderbook_imbalanceg      Ð¿g      Ð?)Ú
+SELL_HEAVYÚBALANCEDÚ	BUY_HEAVYÚrecent_buy_sharegš™™™™™Ù?g333333ã?Ú
+spread_pctg¸…ëQ¸ž?gš™™™™™¹?)ÚTIGHTÚNORMALÚWIDE)Úmicro_alignmentÚorderbook_imbalance_bandÚrecent_buy_share_bandÚ
+spread_band) r
+   ÚgetÚ
+isinstanceÚdictÚstrÚupperr   )ÚrowÚmicror   s      r   Úmicro_featuresr4      sÔ   € ÜS‹M×ÑÐ5Ó6×<¸"€EÜ
+eœT×
+"Ñ
+"Øˆ	Øi‰i˜	Ó"×( b€GÜ
+gœt×
+$Ñ
+$Øˆ ä˜uŸy™y¨Ó5×F¸ÓG×MÑMÓOÜ$)¨'¯+©+Ð6KÓ*LÈuÐVZÈmò  ^Có  %DÜ!& w§{¡{Ð3EÓ'FÈÈtÈÒV{Ó!|Ü˜WŸ[™[¨Ó6¸¸t¸ÒF_Ó`ñ	ð r   c                óà  • [        U 5      n[        5       nUR                  S5      =(       d    0 n[         U[        5      (       GaÒ  [
+        UR                  S5      =(       d    S5      R
+                  5       nU(       a  UR                  SU 35        UR                  S5      =(       d    0 n[         U[        5      (       a˜  [
+        UR                  S5      =(       d    S5      R
+                  5       n[
+        UR                  S 5      =(       d    S5      R
+                  5       n U(       a  UR                  SU 35        U (       a  UR                  S	U  35        S
+ H¹  nUR                  U5      n	[         U	[        5      (       d  M+  [
+        U	R                  S
+5      =(       d2    U	R                  S5      =(       d    U	R                  S5      =(       d    S5      R
+                  5       n
+U
+(       d  M•  UR                  UR
+                  5        S
+U
+ 35        M»  
+   UR                  S5      =(       d    0 n
+[         U
+[        5      (       a  U
+R                  S5      O/ n[         U[        5      (       a  US S  Hv  n
+[         U
+[        5      (       d  M  [
+        U
+R                  S5      =(       d    S5      R                  5       R
+                  5       nU(       d  Mb  UR                  SU 35        Mx  
+   U$ )NÚq7_strategy_lab_shadowÚactive_profileÚ z
+Q7_PROFILE:Ú
+rsi_profileÚ	directionÚalignment_with_systemzRSI_DIRECTION:zRSI_ALIGNMENT:)Ú
+vwap_reversalÚbreakout_retestÚtrendline_retestÚstatusÚsignalÚ:Ústrategy_attribution_v2Úitemsé(   Ústrategyz	STRATEGY:)
+r
+   Úsetr-   r.   r/   r0   r1   ÚaddÚlistÚstrip)r2   ÚlearnÚtokensÚq7Ú profileÚrsir:   ÚalignÚkeyÚvalr?   Ú
+attributionrC   ÚitemrE   s                  r   Ústrategy_tokensrT      s'  € ÜS‹M€EÜ“u€FØ	‰Ð+Ó	,×	2°€BÜ "”d× Ò Üb—f‘fÐ-Ó.×4°"Ó5×;Ñ;Ó=ˆ Þ
+ØJ‰J˜ W IÐ.Ô/Øf‰f]Ó#×) rˆÜ
+cœ4×
+ Ñ
+ Ü˜CŸG™G KÓ0×6°BÓ7×=Ñ=Ó?ˆIÜ˜Ÿ ™ Ð 7Ó8×>¸BÓ?×EÑEÓGˆEÞØ—
+‘
+˜^¨I¨;Ð7Ô8ÞØ—
+‘
+˜^¨E¨7Ð3Ô4ÛKˆCØ—&‘&˜“+ˆCÜ˜#œt×$Ó$Ü˜SŸW™W XÓ.×a°#·'±'¸(Ó2C×aÀsÇwÁwÈ{ÓG[×aÐ_aÓb×hÑhÓjß6Ø—J‘J #§)¡)£+ ¨a°¨xÐ8Ö9ñ
+ Lð —)‘)Ð5Ó6×<¸"€KÜ(2°;Ä×(EÑ(EˆKO‰O˜GÔ$È2€EÜ %œ× Ñ Ø˜#˜2“JˆDÜ˜d¤D×)Ñ)ÙÜ˜4Ÿ8™8 JÓ/×5°2Ó6×<Ñ<Ó>×DÑDÓFˆHßˆxØ—
+‘
+˜Y x jÐ1Ö2ñ
+ ð €Mr   c                óŠ  • [        U 5      n[        U R                  S5      =(       d    S5      R                   5       [        U R                  S5      =(       d    S5      R                   5       [	        U 5      [        UR                  S5      =(       d    S5      R                   5       [
+        UR                  S5      / SQ/ S Q5      [
+        UR                  S5      / SQ/ S Q5      [
+        UR                  S	5      / SQ/ S Q5      [
+        UR                  S
+5      / S
+Q/ S Q5      [
+        UR                  S5      / SQ/ S Q5      S
+.	nUR
+                  [        U 5      5        [        U 5      n[        S U 5       5      (       a  SOSUS'   [        S U 5       5      (       a  SOSUS'   [        S U 5       5      (       a  SOSUS'   U$ )NÚaction_normalizedÚ UNKNOWNÚ	timeframeÚentry_sourceÚ
+entry_score)é7   éF   éP   )ÚLOWÚMEDIUMÚHIGHÚ	VERY_HIGHÚentry_defensibility_scoreÚentry_reachability_scoreÚsl_reliability)é<   éK   éZ   Útp_quality_score)	r:   rX   r   rY   Úentry_score_bandÚdefensibility_bandÚreachability_bandÚsl_quality_bandÚtp_quality_bandc              3  óD   #   • U  H  nS U;   =(       d    SU;   v •  M  
+   g7f)z
+ORDER BLOCKÚ
+ORDER_BLOCKN© ©Ú.0Úts     r   Ú	<genexpr>Ú%execution_features.<locals>.<genexpr>P   s&   é € Ð)cÒ\bÐWX¨-¸1Ñ*<×*RÀ
+ÐQRÑ@RÔ*RÒ\bùó   ‚ ÚYESÚNOÚhas_order_blockc              3  óD   #   • U  H  nS U;   =(       d    SU;   v •  M  
+   g7f)ÚSWEEPÚ	LIQUIDITYNrp   rq   s     r   rt   ru   Q   s!   é € Ð#UÊfÈ G¨q¡L×$D°KÀ1Ñ4DÔ$DÊfùrv   Ú	has_sweepc              3  óD   #   • U  H  nS U;   =(       d    SU;   v •  M  
+   g7f)ÚPULLBACKÚRETESTNrp   rq   s     r   rt   ru   R   s"   é € Ð&XÒQWÈA z°Q¡×'G¸(Àa¹-Ô'GÒQWùrv   Úhas_pullback)
+r
+   r0   r-   r1   r   r   Úupdater4   rT   Úany)r2   ÚexÚoutrK   s       r   Úexecution_featuresr†   A   se  € Ü	3‹€Bä˜Ÿ™Ð!4Ó5×B¸ÓC×IÑIÓKÜ˜Ÿ™ Ó-×:°Ó;×AÑAÓCÜ˜“+Ü˜BŸF™F >Ó2×?°iÓ@×FÑFÓHÜ! "§&¡&¨Ó"7ºÒGjÓkÜ# B§F¡FÐ+FÓ$GÊÒUxÓyÜ" 2§6¡6Ð*DÓ#EÂzÒSvÓwÜ  §¡Ð(8Ó!9º:ÒGjÓkÜ  §¡Ð(:Ó!;ºZÒIlÓmñ
+
+€Cð ‡JJŒ~˜cÓ"Ô#Ü
+˜SÓ
+!€FÜ&)Ñ)cÑ\bÓ)c×&cÑ&c™UÐim€CÐÑÜ #Ñ#UÉfÓ#U× UÑ U‘uÐ[_€Cˆ
+ÑÜ#&Ñ&XÑQWÓ&X×#XÑ#X™%Ð^b€CˆÑØ
+€Jr   c                 ó$  • [        U 5      R                  S5      =(       d    0 n[        U[        5      (       a  UR                  S5      O/ n[        U[        5      (       a*  U Vs/ s H  n[        U[        5      (       d  M  UPM  
+   sn$ / $ s  snf )NrB   rC   )r
+   r-   r.   r/   rH   )r2   rR   rC   r   s       r   Útrader_itemsrˆ   V   sk   € Ü˜3“-×#Ñ#Ð$=Ó>×DÀ"€KÜ(2°;Ä×(EÑ(EˆKO‰O˜GÔ$È2€EÜ8BÀ5Ì$×8OÑ8O‘uÓ
+4’u!¤
+¨1¬d× 3A‘uÑ
+4ÐWÐUWÐWùÒ
+4s   Á%B
+ÂB
+c                ó  • [        U R                  S5      =(       d    S5      R                  5       n[        U R                  S5      =(       d    S5      R                   5       R	                  SS5      nUS:X  a  g US;   a  g	US
+;   a  g
+g)
+NÚ
+system_typer8   ÚsymbolÚ/Ú-Ú futuresÚCRYPTO_FUTURES>   ÚPAXGUSDTú	PAXG-USDTÚ	PAXG_USDT>   Ú PAXGBTCúPAXG-BTCÚPAXG_BTCÚ
+CRYPTO_SPOT)r0   r-   Úlowerr1   Ú replace)r2   rŠ   r‹   s      r   Ú
+market_familyr™   \   sw   € Üc—g‘g˜mÓ,×2°Ó3×9Ñ9Ó;€KÜ
+—‘˜Ó"×( bÓ
+)×
+/Ñ
+/Ó
+1×
+9Ñ
+9¸#¸sÓ
+C€FØ iÓ ØØ 
+Ð*Ó *ØØ 
+Ð(Ó (ØØ
+r   c                ó®   • [        U 5      n[        U R                  S5      =(       d    S5      R                   5       R	                  SS5      nUS;   a  U$ S$ ) Nr‹   rW   rŒ   r   >   r•   r’   Ú
+ALL_CRYPTO)r™   r0   r-   r1   r˜   )r2   Úfamilyr‹   s      r   Ú
+scoped_symbolr   h   sO   € Ü
+˜3Ó
+€FÜ
+—‘˜Ó"×/ iÓ
+0×
+6Ñ
+6Ó
+8×
+@Ñ
+@ÀÀcÓ
+J€Fð Ð8Ó8ˆ6ÐJ¸lÐJr   N)r2   úDict[str, Any]ÚreturnzDict[str, str])r2   rž   rŸ   zSet[str])r2   rž   rŸ   zList[Dict[str, Any]])r2   rž   rŸ   r0   )Ú
+__future__r   Útypingr   r   r   r    r   r	   r   r
+   r
+   r   r
+   r   r4   rT   r†   rˆ   r™   r   rp   r   r   Ú<module>r¢      s:   ðÝ "ß 8× 8ß 4Ó 4ò ôôôDô*Xô	õKr   
