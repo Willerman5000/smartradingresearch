@@ -25,6 +25,7 @@ _state = {
     'running': False, 'last_started_at': None, 'last_finished_at': None,
     'last_error': None, 'last_run_id': None, 'last_source_rows': 0,
     'last_findings': 0, 'last_rss_mb': 0.0, 'last_source_coverage': {},
+    'last_ai_proposals': 0,
 }
 
 
@@ -94,6 +95,60 @@ def _source_rows(days: int, max_rows: int):
     rows = list(selected.values())
     rows.sort(key=lambda r: (str(r.get('created_at') or ''), str(r.get('id') or '')))
     return rows
+
+
+
+def _load_ai_strategy_proposals(limit: int = 12):
+    """Read structured Learning Scientist proposals from the central DB.
+
+    The LLM only proposes hypotheses.  Strategy Research measures them against
+    the same persisted source rows; Validation/Governance remains the only
+    promotion path and production is never changed here.
+    """
+    if config.ENGINE != 'strategy':
+        return []
+    try:
+        rows = central.select('ai_advisor_observations', params={
+            'select': 'response_json,created_at,provider,model',
+            'usage_type': 'eq.LEARNING',
+            'context_type': 'eq.LEARNING',
+            'order': 'created_at.desc',
+            'limit': '20',
+        })
+    except Exception as exc:
+        print(f'⚠️ AI proposal source: {exc}', flush=True)
+        return []
+
+    out=[]; seen=set()
+    for row in rows or []:
+        response=row.get('response_json') or {}
+        if not isinstance(response, dict):
+            continue
+        proposals=response.get('strategy_proposals') or []
+        if not isinstance(proposals, list):
+            continue
+        for proposal in proposals:
+            if not isinstance(proposal, dict):
+                continue
+            if str(proposal.get('status') or '').upper() != 'SHADOW_PROPOSAL':
+                continue
+            if not bool(proposal.get('runtime_testable')):
+                continue
+            filters=proposal.get('research_filters') or {}
+            if not isinstance(filters, dict) or not filters:
+                continue
+            key=str(proposal.get('proposal_id') or '') or json.dumps(filters, sort_keys=True)
+            if key in seen:
+                continue
+            seen.add(key)
+            item=dict(proposal)
+            item['provider']=row.get('provider')
+            item['model']=row.get('model')
+            item['created_at']=row.get('created_at')
+            out.append(item)
+            if len(out) >= max(1, int(limit)):
+                return out
+    return out
 
 
 def _dataset_fingerprint(rows) -> str:
@@ -290,7 +345,12 @@ def _run_job(days: int, max_rows: int):
                 if rss_mb() >= config.MEMORY_HARD_MB:
                     raise MemoryError(f'RSS after source {rss_mb():.1f}MB >= {config.MEMORY_HARD_MB}MB')
                 fingerprint = _dataset_fingerprint(rows)
-                findings = _engine.analyze(rows)
+                ai_proposals = _load_ai_strategy_proposals()
+                _state['last_ai_proposals'] = len(ai_proposals)
+                if config.ENGINE == 'strategy':
+                    findings = _engine.analyze(rows, ai_proposals=ai_proposals)
+                else:
+                    findings = _engine.analyze(rows)
                 finding_count = len(findings)
                 _persist_findings(findings, run_id, fingerprint)
                 del rows, findings
@@ -372,7 +432,7 @@ def dashboard_api():
             'authority': 'RESEARCH_ONLY', 'rss_mb': round(rss_mb(),2),
             'running': _state['running'], 'stages': stages, 'items': items,
             'coverage': source_coverage(rows),
-            'last_run': {k:_state.get(k) for k in ('last_started_at','last_finished_at','last_error','last_source_rows','last_findings','last_source_coverage')},
+            'last_run': {k:_state.get(k) for k in ('last_started_at','last_finished_at','last_error','last_source_rows','last_findings','last_source_coverage','last_ai_proposals')},
         })
     except Exception as exc:
         return jsonify({'ok':False,'engine':config.ENGINE,'error':str(exc)[:240]}), 500

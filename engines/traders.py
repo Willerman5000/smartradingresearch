@@ -26,5 +26,9 @@ def analyze(rows: List[Dict[str,Any]]) -> List[Dict[str,Any]]:
     findings=[]
     for (dim,scope_tuple),grows in groups.items():
         if len(grows)<5: continue
-        item=finding(ENGINE,dim,dict(scope_tuple),grows); vals=judged.get((dim,scope_tuple)) or []; item["meta"]={"judgement_expectancy_r":round(sum(vals)/len(vals),5) if vals else None,"judgement_n":len(vals),"note":"SUPPORT usa R real; OPPOSE invierte R."}; findings.append(item)
+        item=finding(ENGINE,dim,dict(scope_tuple),grows); vals=judged.get((dim,scope_tuple)) or []
+        meta=dict(item.get("meta") or {})
+        meta.update({"judgement_expectancy_r":round(sum(vals)/len(vals),5) if vals else None,"judgement_n":len(vals),"note":"SUPPORT usa R real; OPPOSE invierte R."})
+        item["meta"]=meta
+        findings.append(item)
     return top_findings(findings)
