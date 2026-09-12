@@ -11,7 +11,9 @@ _RUNTIME_FIELDS = {
     "entry_source", "micro_alignment", "sl_quality", "sl_quality_band",
     "tp_quality", "tp_quality_band", "defensibility_band",
     "reachability_band", "has_order_block", "has_sweep", "has_pullback",
-    "orderbook_imbalance_band", "recent_buy_share_band", "component",
+    "orderbook_imbalance_band", "recent_buy_share_band",
+    "oi_change_band", "funding_band", "basis_band", "liquidity_band",
+    "component",
 }
 
 

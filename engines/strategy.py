@@ -3,6 +3,7 @@ from collections import defaultdict
 from typing import Any, Dict, List
 from config import FINDING_LIMIT
 from engines.base import finding, top_findings
+from engines.strategy_factory import analyze_factory
 from features import (
     strategy_tokens, market_family, scoped_symbol, execution_features,
 )
@@ -26,6 +27,12 @@ def _proposal_match(row: Dict[str, Any], filters: Dict[str, Any]) -> bool:
         "has_order_block": f.get("has_order_block"),
         "has_sweep": f.get("has_sweep"),
         "has_pullback": f.get("has_pullback"),
+        "oi_change_band": f.get("oi_change_band"),
+        "funding_band": f.get("funding_band"),
+        "basis_band": f.get("basis_band"),
+        "liquidity_band": f.get("liquidity_band"),
+        "orderbook_imbalance_band": f.get("orderbook_imbalance_band"),
+        "recent_buy_share_band": f.get("recent_buy_share_band"),
     }
     tokens = strategy_tokens(row)
     for key, expected in (filters or {}).items():
@@ -98,14 +105,22 @@ def analyze(rows: List[Dict[str,Any]], ai_proposals: List[Dict[str,Any]] | None 
 
     ranked=top_findings(findings)
     ai_items=_ai_proposal_findings(rows, ai_proposals or [])
-    # Las propuestas IA deben ser visibles para cerrar el bucle de aprendizaje,
-    # pero nunca desplazan toda la evidencia estadística existente.
+    factory_items=analyze_factory(rows)
+    # Factory + IA are hypotheses, not authority.  We reserve visibility for
+    # continuous generation without hiding the baseline component attribution.
     merged=[]; seen=set()
-    for item in ai_items[:12] + ranked:
-        key=str(item.get("feature_key") or "")
-        if not key or key in seen:
-            continue
-        seen.add(key); merged.append(item)
-        if len(merged)>=FINDING_LIMIT:
-            break
+    streams = [factory_items[:40], ai_items[:12], ranked]
+    cursors = [0, 0, 0]
+    while len(merged) < FINDING_LIMIT and any(cursors[i] < len(streams[i]) for i in range(len(streams))):
+        for i, stream in enumerate(streams):
+            if cursors[i] >= len(stream):
+                continue
+            item = stream[cursors[i]]
+            cursors[i] += 1
+            key=str(item.get("feature_key") or "")
+            if not key or key in seen:
+                continue
+            seen.add(key); merged.append(item)
+            if len(merged)>=FINDING_LIMIT:
+                break
     return merged

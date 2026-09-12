@@ -20,11 +20,19 @@ def micro_features(row: Dict[str, Any]) -> Dict[str, str]:
     metrics = micro.get("metrics") or {}
     if not isinstance(metrics, dict):
         metrics = {}
+    spread_band = _band(metrics.get("spread_pct"), [0.03, 0.10], ["TIGHT","NORMAL","WIDE"])
+    liquidity_raw = str(metrics.get("liquidity_band") or "").upper()
+    if liquidity_raw not in {"LOW", "NORMAL", "HIGH"}:
+        liquidity_raw = {"TIGHT": "HIGH", "NORMAL": "NORMAL", "WIDE": "LOW"}.get(spread_band, "NO_DATA")
     return {
         "micro_alignment": str(micro.get("alignment") or "UNAVAILABLE").upper(),
         "orderbook_imbalance_band": _band(metrics.get("orderbook_imbalance"), [-0.25, 0.25], ["SELL_HEAVY","BALANCED","BUY_HEAVY"]),
         "recent_buy_share_band": _band(metrics.get("recent_buy_share"), [0.40, 0.60], ["SELL_HEAVY","BALANCED","BUY_HEAVY"]),
-        "spread_band": _band(metrics.get("spread_pct"), [0.03, 0.10], ["TIGHT","NORMAL","WIDE"]),
+        "spread_band": spread_band,
+        "oi_change_band": _band(metrics.get("oi_change_pct"), [-0.50, 0.50], ["DELEVERAGING","STABLE","BUILDING"]),
+        "funding_band": _band(metrics.get("funding_rate"), [-0.0005, 0.0005], ["SHORT_CROWDED","NEUTRAL","LONG_CROWDED"]),
+        "basis_band": _band(metrics.get("basis_pct"), [-0.05, 0.05], ["BACKWARDATION","NEUTRAL","CONTANGO"]),
+        "liquidity_band": liquidity_raw,
     }
 
 

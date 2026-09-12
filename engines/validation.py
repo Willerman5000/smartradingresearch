@@ -48,16 +48,19 @@ def analyze_findings(rows: List[Dict[str,Any]]) -> List[Dict[str,Any]]:
         contract = row_meta.get("runtime_contract") or {}
         runtime_trackable = bool(contract.get("runtime_trackable", False))
         shadow_target=canary_target=None
-        is_ai_proposal = str(row.get("experiment") or "") == "AI_STRATEGY_PROPOSAL"
+        experiment = str(row.get("experiment") or "")
+        is_ai_proposal = experiment == "AI_STRATEGY_PROPOSAL"
+        is_factory_strategy = experiment == "FACTORY_STRATEGY" or bool(row_meta.get("factory_strategy"))
+        strict_generated = bool(is_ai_proposal or is_factory_strategy)
 
         if vn>=10 and vexp is not None and vexp<=-0.20:
             stage="REJECTED_OOS"
             reason="Holdout temporal negativo; puede usarse para proteger/vetar, no para promover."
-        elif (not is_ai_proposal) and n>=60 and vn>=20 and vexp is not None and vexp>0.20 and vpf is not None and vpf>1.25 and not pf_degenerate and stable and (len(symbols)>=3 or fam in {"PAXG_USDT","PAXG_BTC"}) and net_pct>=max(90, config.MIN_NET_EVIDENCE_PCT) and runtime_trackable:
+        elif (not strict_generated) and n>=60 and vn>=20 and vexp is not None and vexp>0.20 and vpf is not None and vpf>1.25 and not pf_degenerate and stable and (len(symbols)>=3 or fam in {"PAXG_USDT","PAXG_BTC"}) and net_pct>=max(90, config.MIN_NET_EVIDENCE_PCT) and runtime_trackable:
             stage="SHADOW_READY_FAST"
             reason="Evidencia temporal fuerte, estable, neta y reproducible en runtime; requiere Shadow live antes de Canary."
             shadow_target,canary_target=_targets(scope,True)
-        elif n >= (30 if is_ai_proposal else 25) and vn>=10 and vexp is not None and vexp>0.05 and vpf is not None and vpf>1.10 and not pf_degenerate and stable and net_pct >= (max(90, config.MIN_NET_EVIDENCE_PCT) if is_ai_proposal else config.MIN_NET_EVIDENCE_PCT):
+        elif n >= (30 if strict_generated else 25) and vn>=10 and vexp is not None and vexp>(0.10 if strict_generated else 0.05) and vpf is not None and vpf>(1.15 if strict_generated else 1.10) and not pf_degenerate and stable and net_pct >= (max(90, config.MIN_NET_EVIDENCE_PCT) if strict_generated else config.MIN_NET_EVIDENCE_PCT):
             if not runtime_trackable:
                 stage="VALIDATION_REQUIRED"
                 reason="Edge temporal positivo, pero el runtime central no puede reproducir todos los campos del candidato."
@@ -94,6 +97,8 @@ def analyze_findings(rows: List[Dict[str,Any]]) -> List[Dict[str,Any]]:
             "walk_forward_positive_ratio":positive_ratio,
             "is_current":True,
             "ai_proposal": is_ai_proposal,
+            "factory_strategy": is_factory_strategy,
+            "generated_strategy_requires_strict_evidence": strict_generated,
             "ai_proposal_requires_strict_net_evidence": bool(is_ai_proposal),
         })
         promotions.append({
