@@ -13,7 +13,7 @@ from flask import Flask, jsonify, request, render_template, Response
 import config
 from db import RestDB, since_iso, utc_now
 from engines import ENGINES
-from engines.base import rss_mb
+from engines.base import rss_mb, balanced_current_rows, source_coverage
 
 app = Flask(__name__)
 central = RestDB(config.CENTRAL_URL, config.CENTRAL_KEY)
@@ -24,7 +24,7 @@ _start_lock = threading.Lock()
 _state = {
     'running': False, 'last_started_at': None, 'last_finished_at': None,
     'last_error': None, 'last_run_id': None, 'last_source_rows': 0,
-    'last_findings': 0, 'last_rss_mb': 0.0,
+    'last_findings': 0, 'last_rss_mb': 0.0, 'last_source_coverage': {},
 }
 
 
@@ -36,17 +36,63 @@ def _auth_ok() -> bool:
 
 
 def _source_rows(days: int, max_rows: int):
-    # Read the newest bounded window first.  The old ASC+limit behaviour could
-    # keep the oldest rows forever once the table grew beyond max_rows.
-    rows = central.paged_select(
-        'analytics_quality_v2_compact_v1',
-        params={
+    """Read a bounded but timeframe-balanced source window.
+
+    A single newest-first global LIMIT is dominated by 5m/15m/30m Futures and
+    can starve the strategic 4h/12h/1D/1W Spot evidence.  We reserve part of
+    the same max_rows budget for those strategic Spot lanes, then sample every
+    supported timeframe, and finally fill any unused capacity with the newest
+    rows globally.  Total rows never exceeds max_rows.
+    """
+    strategic_spot = ("4h", "12h", "1D", "1W")
+    all_timeframes = ("5m", "15m", "30m", "1h", "2h", "4h", "12h", "1D", "1W")
+    selected = {}
+
+    def add_rows(rows):
+        for row in rows or []:
+            if len(selected) >= max_rows:
+                break
+            key = str(row.get("id") or "")
+            if key and key not in selected:
+                selected[key] = row
+
+    def lane(limit, *, timeframe=None, system_type=None):
+        limit = max(0, min(int(limit or 0), max_rows - len(selected)))
+        if limit <= 0:
+            return []
+        params = {
             'select': 'id,symbol,timeframe,system_type,action_normalized,status,created_at,entry_price,stop_loss,take_profit,risk_reward,context,signal_results',
             'created_at': f'gte.{since_iso(days)}',
             'order': 'created_at.desc',
-        }, max_rows=max_rows, page_size=config.PAGE_SIZE,
-    )
-    rows.reverse()
+        }
+        if timeframe:
+            params['timeframe'] = f'eq.{timeframe}'
+        if system_type:
+            params['system_type'] = f'eq.{system_type}'
+        return central.paged_select(
+            'analytics_quality_v2_compact_v1', params=params,
+            max_rows=limit, page_size=min(config.PAGE_SIZE, max(1, limit)),
+        )
+
+    # 35% of the budget is reserved for the four Spot decision timeframes.
+    strategic_budget = max(0, min(max_rows, int(round(max_rows * 0.35))))
+    strategic_quota = strategic_budget // len(strategic_spot) if strategic_spot else 0
+    for tf in strategic_spot:
+        add_rows(lane(strategic_quota, timeframe=tf, system_type='spot'))
+
+    # The remaining planned budget covers every timeframe, regardless of market.
+    general_budget = max(0, max_rows - strategic_budget)
+    general_quota = general_budget // len(all_timeframes) if all_timeframes else 0
+    for tf in all_timeframes:
+        add_rows(lane(general_quota, timeframe=tf))
+
+    # Sparse long-TF lanes leave room; use it for the newest rows overall.
+    remaining = max_rows - len(selected)
+    if remaining > 0:
+        add_rows(lane(remaining))
+
+    rows = list(selected.values())
+    rows.sort(key=lambda r: (str(r.get('created_at') or ''), str(r.get('id') or '')))
     return rows
 
 
@@ -133,7 +179,7 @@ def _persist_findings(findings, run_id: str, dataset_fingerprint: str):
 def _dashboard_rows():
     """Small read-only payload for the browser. Never loads source trading rows."""
     limit = int(getattr(config, 'DASHBOARD_MAX_ROWS', 120))
-    fetch_limit = min(500, max(limit * 3, limit))
+    fetch_limit = min(1200 if config.ENGINE == 'validation' else 500, max(limit * (8 if config.ENGINE == 'validation' else 3), limit))
     if config.ENGINE == 'validation':
         raw = central.select('research_promotions_v1', params={
             'select': 'candidate_key,source_engine,experiment,stage,reason,scope,metrics,meta,research_version,updated_at',
@@ -149,7 +195,8 @@ def _dashboard_rows():
             'order': 'updated_at.desc',
             'limit': str(fetch_limit),
         })
-    return [r for r in raw if (r.get('meta') or {}).get('is_current') is True][:limit]
+    current = [r for r in raw if (r.get('meta') or {}).get('is_current') is True and str(r.get('stage') or '') != 'STALE']
+    return balanced_current_rows(current, limit)
 
 
 def _compact_metric(row):
@@ -239,6 +286,7 @@ def _run_job(days: int, max_rows: int):
             else:
                 rows = _source_rows(days, max_rows)
                 source_count = len(rows)
+                _state['last_source_coverage'] = source_coverage(rows)
                 if rss_mb() >= config.MEMORY_HARD_MB:
                     raise MemoryError(f'RSS after source {rss_mb():.1f}MB >= {config.MEMORY_HARD_MB}MB')
                 fingerprint = _dataset_fingerprint(rows)
@@ -323,7 +371,8 @@ def dashboard_api():
             'ok': True, 'engine': config.ENGINE, 'version': config.VERSION,
             'authority': 'RESEARCH_ONLY', 'rss_mb': round(rss_mb(),2),
             'running': _state['running'], 'stages': stages, 'items': items,
-            'last_run': {k:_state.get(k) for k in ('last_started_at','last_finished_at','last_error','last_source_rows','last_findings')},
+            'coverage': source_coverage(rows),
+            'last_run': {k:_state.get(k) for k in ('last_started_at','last_finished_at','last_error','last_source_rows','last_findings','last_source_coverage')},
         })
     except Exception as exc:
         return jsonify({'ok':False,'engine':config.ENGINE,'error':str(exc)[:240]}), 500

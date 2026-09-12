@@ -1,6 +1,7 @@
 from metrics import summarize_oos
 from engines.base import runtime_contract
 from engines.validation import analyze_findings
+from config import VERSION
 
 
 def row(i, r):
@@ -33,7 +34,7 @@ def test_runtime_contract_blocks_unreproducible_trader_fields():
 
 def test_validation_requires_net_and_runtime_for_shadow():
     finding={
-        'engine':'execution','experiment':'X','feature_key':'x','research_version':'RFV1_3_INTEGRITY_20260912',
+        'engine':'execution','experiment':'X','feature_key':'x','research_version':VERSION,
         'scope':{'market_family':'CRYPTO_FUTURES','direction':'SHORT','timeframe':'30M'},
         'meta':{'is_current':True,'runtime_contract':{'runtime_trackable':True}},
         'metrics':{

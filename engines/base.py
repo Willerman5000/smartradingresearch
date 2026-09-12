@@ -48,6 +48,97 @@ def runtime_contract(scope: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+
+TIMEFRAME_ORDER = ("4H", "12H", "1D", "1W", "5M", "15M", "30M", "1H", "2H", "ALL")
+
+def normalized_timeframe(value: Any) -> str:
+    raw = str(value or "ALL").strip()
+    if raw.lower() in {"1d", "1w"}:
+        return raw.upper()
+    return raw.upper() or "ALL"
+
+def source_coverage(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    by_timeframe: Dict[str, int] = {}
+    by_system: Dict[str, int] = {}
+    by_system_timeframe: Dict[str, int] = {}
+    for row in rows or []:
+        tf = normalized_timeframe(row.get("timeframe"))
+        system = str(row.get("system_type") or "UNKNOWN").strip().upper() or "UNKNOWN"
+        by_timeframe[tf] = by_timeframe.get(tf, 0) + 1
+        by_system[system] = by_system.get(system, 0) + 1
+        key = f"{system}:{tf}"
+        by_system_timeframe[key] = by_system_timeframe.get(key, 0) + 1
+    strategic = {tf: int(by_timeframe.get(tf, 0)) for tf in ("4H", "12H", "1D", "1W")}
+    return {
+        "rows": len(rows or []),
+        "by_timeframe": dict(sorted(by_timeframe.items())),
+        "by_system": dict(sorted(by_system.items())),
+        "by_system_timeframe": dict(sorted(by_system_timeframe.items())),
+        "strategic_timeframes": strategic,
+        "missing_strategic_timeframes": [tf for tf, n in strategic.items() if n <= 0],
+    }
+
+def balanced_current_rows(rows: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
+    """Return a compact dashboard sample without letting one TF/engine monopolize it."""
+    limit = max(1, int(limit or 1))
+    current = [
+        row for row in (rows or [])
+        if (row.get("meta") or {}).get("is_current") is not False
+        and str(row.get("stage") or "") != "STALE"
+    ]
+    if len(current) <= limit:
+        return current
+
+    picked: List[Dict[str, Any]] = []
+    seen = set()
+
+    def add(row):
+        key = str(row.get("candidate_key") or row.get("feature_key") or id(row))
+        if key in seen or len(picked) >= limit:
+            return
+        seen.add(key)
+        picked.append(row)
+
+    # First guarantee visibility per engine x timeframe where evidence exists.
+    for tf in TIMEFRAME_ORDER:
+        for row in current:
+            scope = row.get("scope") or {}
+            if normalized_timeframe(scope.get("timeframe")) != tf:
+                continue
+            engine = str(row.get("source_engine") or row.get("engine") or "UNKNOWN")
+            marker = (engine, tf)
+            if marker in {(str(x.get("source_engine") or x.get("engine") or "UNKNOWN"), normalized_timeframe((x.get("scope") or {}).get("timeframe"))) for x in picked}:
+                continue
+            add(row)
+            if len(picked) >= limit:
+                return picked
+
+    # Then round-robin by timeframe, preserving newest-first order within each bucket.
+    buckets = {tf: [] for tf in TIMEFRAME_ORDER}
+    other = []
+    for row in current:
+        tf = normalized_timeframe((row.get("scope") or {}).get("timeframe"))
+        (buckets.get(tf) if tf in buckets else other).append(row)
+    active = [tf for tf in TIMEFRAME_ORDER if buckets[tf]]
+    idx = 0
+    while active and len(picked) < limit:
+        tf = active[idx % len(active)]
+        bucket = buckets[tf]
+        while bucket and str(bucket[0].get("candidate_key") or bucket[0].get("feature_key") or id(bucket[0])) in seen:
+            bucket.pop(0)
+        if bucket:
+            add(bucket.pop(0))
+        if not bucket:
+            active.remove(tf)
+            idx = 0
+        else:
+            idx += 1
+    for row in other + current:
+        add(row)
+        if len(picked) >= limit:
+            break
+    return picked
+
 def finding(engine: str, experiment: str, scope: Dict[str, Any], rows: List[Dict[str, Any]], *, meta: Dict[str, Any] | None = None) -> Dict[str, Any]:
     summary = summarize_oos(rows)
     stage = evidence_stage(summary)
