@@ -281,5 +281,28 @@ def analyze_factory(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         ),
         reverse=True,
     )
-    limit = int(getattr(config, "FACTORY_MAX_CANDIDATES", 40))
-    return candidates[: max(5, limit)]
+    limit = max(5, int(getattr(config, "FACTORY_MAX_CANDIDATES", 48)))
+
+    # Commit I: coverage-balanced Factory. A hot 30m SHORT cluster must not
+    # consume the entire candidate budget while 1h/2h/Spot cells remain empty.
+    buckets = defaultdict(list)
+    for item in candidates:
+        scope=item.get("scope") or {}
+        bucket=(str(scope.get("market_family") or "UNKNOWN"), str(scope.get("timeframe") or "ALL"), str(scope.get("symbol") or "ALL"))
+        buckets[bucket].append(item)
+    ordered_buckets=sorted(buckets, key=lambda x:(x[0],x[1],x[2]))
+    selected=[]; seen=set()
+    while ordered_buckets and len(selected)<limit:
+        next_round=[]
+        for bucket in ordered_buckets:
+            rows=buckets[bucket]
+            if rows:
+                item=rows.pop(0); key=str(item.get("feature_key") or "")
+                if key and key not in seen:
+                    seen.add(key); selected.append(item)
+                    if len(selected)>=limit:
+                        break
+            if rows:
+                next_round.append(bucket)
+        ordered_buckets=next_round
+    return selected

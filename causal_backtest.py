@@ -1,0 +1,371 @@
+from __future__ import annotations
+
+"""Causal candle replay for Research Federation V1.6.
+
+The strategy decision at bar i uses only data <= i. Entry can occur only on
+later bars. Same-bar SL+TP ambiguity is resolved conservatively as SL first.
+Candidate selection uses Discovery + Selection Holdout; Final OOS is never used
+to rank candidates.
+"""
+
+from collections import deque
+from dataclasses import dataclass
+import math
+from typing import Any, Dict, Iterable, List, Sequence, Tuple
+
+import config
+from historical_market import Candle
+
+
+@dataclass(frozen=True)
+class StrategySpec:
+    family: str
+    direction_mode: str = "BOTH"  # BOTH | LONG | SHORT
+    fast: int = 12
+    slow: int = 36
+    rsi_len: int = 14
+    rsi_low: float = 32.0
+    rsi_high: float = 68.0
+    lookback: int = 20
+    volume_mult: float = 1.0
+    entry_style: str = "NEXT_OPEN"  # NEXT_OPEN | PULLBACK
+    entry_atr: float = 0.25
+    sl_atr: float = 1.5
+    rr: float = 2.0
+    max_wait: int = 3
+    max_hold: int = 24
+
+    def key(self) -> str:
+        return (
+            f"{self.family}:{self.direction_mode}:f{self.fast}:s{self.slow}:"
+            f"r{self.rsi_len}:{self.rsi_low:g}-{self.rsi_high:g}:lb{self.lookback}:"
+            f"v{self.volume_mult:g}:{self.entry_style}:{self.entry_atr:g}:"
+            f"sl{self.sl_atr:g}:rr{self.rr:g}:w{self.max_wait}:h{self.max_hold}"
+        )
+
+
+@dataclass
+class Trade:
+    symbol: str
+    direction: str
+    signal_ts: int
+    entry_ts: int
+    exit_ts: int
+    entry: float
+    stop: float
+    target: float
+    r_net: float
+    mfe_r: float
+    mae_r: float
+    bars_held: int
+    exit_reason: str
+
+
+def _ema(values: Sequence[float], period: int) -> List[float]:
+    if not values:
+        return []
+    alpha = 2.0 / (max(1, period) + 1.0)
+    out = [float(values[0])]
+    for x in values[1:]:
+        out.append(out[-1] + alpha * (float(x) - out[-1]))
+    return out
+
+
+def _atr(candles: Sequence[Candle], period: int = 14) -> List[float]:
+    if not candles:
+        return []
+    trs = [max(1e-12, candles[0].high - candles[0].low)]
+    for i in range(1, len(candles)):
+        c, p = candles[i], candles[i - 1]
+        trs.append(max(c.high - c.low, abs(c.high - p.close), abs(c.low - p.close)))
+    alpha = 1.0 / max(1, period)
+    out = [trs[0]]
+    for x in trs[1:]:
+        out.append(out[-1] + alpha * (x - out[-1]))
+    return out
+
+
+def _rsi(closes: Sequence[float], period: int = 14) -> List[float]:
+    if not closes:
+        return []
+    gains = [0.0] * len(closes)
+    losses = [0.0] * len(closes)
+    for i in range(1, len(closes)):
+        d = closes[i] - closes[i - 1]
+        gains[i] = max(0.0, d)
+        losses[i] = max(0.0, -d)
+    alpha = 1.0 / max(1, period)
+    ag = al = 0.0
+    out = [50.0] * len(closes)
+    for i in range(1, len(closes)):
+        ag += alpha * (gains[i] - ag)
+        al += alpha * (losses[i] - al)
+        if i < period:
+            out[i] = 50.0
+        elif al <= 1e-12:
+            out[i] = 100.0
+        else:
+            rs = ag / al
+            out[i] = 100.0 - 100.0 / (1.0 + rs)
+    return out
+
+
+def _rolling_mean(values: Sequence[float], period: int) -> List[float]:
+    out = [0.0] * len(values)
+    q: deque[float] = deque()
+    total = 0.0
+    for i, x in enumerate(values):
+        q.append(float(x)); total += float(x)
+        if len(q) > period:
+            total -= q.popleft()
+        out[i] = total / max(1, len(q))
+    return out
+
+
+def features(candles: Sequence[Candle], spec: StrategySpec) -> Dict[str, List[float]]:
+    closes = [c.close for c in candles]
+    volumes = [c.volume for c in candles]
+    return {
+        "ema_fast": _ema(closes, spec.fast),
+        "ema_slow": _ema(closes, spec.slow),
+        "rsi": _rsi(closes, spec.rsi_len),
+        "atr": _atr(candles, 14),
+        "volume_ma": _rolling_mean(volumes, 20),
+    }
+
+
+def _regime(i: int, feat: Dict[str, List[float]], candles: Sequence[Candle]) -> str:
+    fast = feat["ema_fast"][i]; slow = feat["ema_slow"][i]
+    atr = max(feat["atr"][i], candles[i].close * 1e-6)
+    distance = (fast - slow) / atr
+    if distance >= 0.35:
+        return "TREND_UP"
+    if distance <= -0.35:
+        return "TREND_DOWN"
+    return "BALANCE"
+
+
+def _direction_signal(i: int, spec: StrategySpec, feat: Dict[str, List[float]], candles: Sequence[Candle]) -> Tuple[str | None, Dict[str, Any]]:
+    if i < max(spec.slow, spec.lookback, spec.rsi_len) + 2:
+        return None, {}
+    c = candles[i]
+    prev = candles[i - 1]
+    fast = feat["ema_fast"][i]; slow = feat["ema_slow"][i]
+    rsi = feat["rsi"][i]
+    atr = max(feat["atr"][i], c.close * 1e-6)
+    regime = _regime(i, feat, candles)
+    vma = max(1e-12, feat["volume_ma"][i])
+    volume_ok = c.volume >= vma * spec.volume_mult
+    prior = candles[max(0, i - spec.lookback):i]
+    prior_high = max((x.high for x in prior), default=c.high)
+    prior_low = min((x.low for x in prior), default=c.low)
+    pullback_long = regime == "TREND_UP" and c.low <= fast + 0.20 * atr and c.close >= fast
+    pullback_short = regime == "TREND_DOWN" and c.high >= fast - 0.20 * atr and c.close <= fast
+    sweep_low = c.low < prior_low and c.close > prior_low
+    sweep_high = c.high > prior_high and c.close < prior_high
+
+    direction = None
+    fam = spec.family
+    if fam == "TREND_CONTINUATION":
+        if regime == "TREND_UP" and c.close > fast and rsi >= 50:
+            direction = "LONG"
+        elif regime == "TREND_DOWN" and c.close < fast and rsi <= 50:
+            direction = "SHORT"
+    elif fam == "TREND_PULLBACK":
+        if pullback_long and rsi >= 45:
+            direction = "LONG"
+        elif pullback_short and rsi <= 55:
+            direction = "SHORT"
+    elif fam == "BREAKOUT_RETEST":
+        if prev.close <= prior_high and c.close > prior_high and volume_ok:
+            direction = "LONG"
+        elif prev.close >= prior_low and c.close < prior_low and volume_ok:
+            direction = "SHORT"
+    elif fam == "MEAN_REVERSION":
+        if regime == "BALANCE" and rsi <= spec.rsi_low and c.close <= fast - 0.45 * atr:
+            direction = "LONG"
+        elif regime == "BALANCE" and rsi >= spec.rsi_high and c.close >= fast + 0.45 * atr:
+            direction = "SHORT"
+    elif fam == "SWEEP_REVERSAL":
+        if sweep_low and rsi <= 48:
+            direction = "LONG"
+        elif sweep_high and rsi >= 52:
+            direction = "SHORT"
+
+    if spec.direction_mode in {"LONG", "SHORT"} and direction != spec.direction_mode:
+        direction = None
+    ctx = {
+        "regime": regime,
+        "has_pullback": "YES" if (pullback_long or pullback_short) else "NO",
+        "has_sweep": "YES" if (sweep_low or sweep_high) else "NO",
+    }
+    return direction, ctx
+
+
+def _cost_r(entry: float, stop: float, bars_held: int, system_type: str, seconds_per_bar: int) -> float:
+    risk_pct = abs(entry - stop) / max(abs(entry), 1e-12)
+    if risk_pct <= 1e-9:
+        return 99.0
+    if system_type == "spot":
+        bps = float(getattr(config, "CAUSAL_SPOT_ROUNDTRIP_BPS", 20)) + float(getattr(config, "CAUSAL_SPOT_SLIPPAGE_BPS", 4))
+        return (bps / 10000.0) / risk_pct
+    bps = float(getattr(config, "CAUSAL_FUTURES_ROUNDTRIP_BPS", 12)) + float(getattr(config, "CAUSAL_FUTURES_SLIPPAGE_BPS", 6))
+    # Conservative modeled funding stress proportional to 8h blocks held.
+    funding_bps = float(getattr(config, "CAUSAL_FUNDING_STRESS_BPS_8H", 1.0))
+    hours_per_bar = max(1.0 / 60.0, float(seconds_per_bar) / 3600.0)
+    funding_blocks = max(0.0, bars_held * hours_per_bar / 8.0)
+    return ((bps + funding_bps * funding_blocks) / 10000.0) / risk_pct
+
+
+def replay_series(symbol: str, system_type: str, candles: Sequence[Candle], spec: StrategySpec) -> Tuple[List[Trade], Dict[str, int]]:
+    if len(candles) < max(80, spec.slow + spec.lookback + 20):
+        return [], {"signals": 0, "activated": 0}
+    feat = features(candles, spec)
+    seconds_per_bar = max(60, int(candles[1].ts - candles[0].ts)) if len(candles) > 1 else 3600
+    trades: List[Trade] = []
+    signals = activated = 0
+    i = max(spec.slow, spec.lookback, spec.rsi_len) + 2
+    n = len(candles)
+    while i < n - 2:
+        direction, _ctx = _direction_signal(i, spec, feat, candles)
+        if direction is None:
+            i += 1
+            continue
+        signals += 1
+        atr = max(feat["atr"][i], candles[i].close * 1e-5)
+        signal_close = candles[i].close
+        entry_idx = None; entry = None
+        for j in range(i + 1, min(n, i + 1 + max(1, spec.max_wait))):
+            bar = candles[j]
+            if spec.entry_style == "NEXT_OPEN":
+                entry_idx = j; entry = bar.open; break
+            wanted = signal_close - spec.entry_atr * atr if direction == "LONG" else signal_close + spec.entry_atr * atr
+            if bar.low <= wanted <= bar.high:
+                entry_idx = j; entry = wanted; break
+        if entry_idx is None or entry is None:
+            i += 1
+            continue
+        activated += 1
+        risk = max(atr * spec.sl_atr, abs(entry) * 0.0005)
+        stop = entry - risk if direction == "LONG" else entry + risk
+        target = entry + risk * spec.rr if direction == "LONG" else entry - risk * spec.rr
+        mfe = mae = 0.0
+        exit_idx = min(n - 1, entry_idx + max(1, spec.max_hold))
+        reason = "TIMEOUT"
+        gross_r = 0.0
+        for k in range(entry_idx, min(n, entry_idx + max(1, spec.max_hold) + 1)):
+            bar = candles[k]
+            if direction == "LONG":
+                mfe = max(mfe, (bar.high - entry) / risk)
+                mae = max(mae, (entry - bar.low) / risk)
+                sl_hit = bar.low <= stop
+                tp_hit = bar.high >= target
+            else:
+                mfe = max(mfe, (entry - bar.low) / risk)
+                mae = max(mae, (bar.high - entry) / risk)
+                sl_hit = bar.high >= stop
+                tp_hit = bar.low <= target
+            # Conservative intrabar ordering: if both touched, count SL.
+            if sl_hit:
+                exit_idx = k; reason = "SL"; gross_r = -1.0; break
+            if tp_hit:
+                exit_idx = k; reason = "TP"; gross_r = spec.rr; break
+        else:
+            last = candles[exit_idx].close
+            gross_r = ((last - entry) / risk) if direction == "LONG" else ((entry - last) / risk)
+            gross_r = max(-1.0, min(spec.rr, gross_r))
+        held = max(1, exit_idx - entry_idx + 1)
+        cost_r = _cost_r(entry, stop, held, system_type, seconds_per_bar)
+        net_r = gross_r - cost_r
+        trades.append(Trade(symbol, direction, candles[i].ts, candles[entry_idx].ts, candles[exit_idx].ts, entry, stop, target, net_r, mfe, mae, held, reason))
+        i = max(i + 1, exit_idx + 1)
+    return trades, {"signals": signals, "activated": activated}
+
+
+def _drawdown(rs: Iterable[float]) -> float:
+    eq = peak = dd = 0.0
+    for r in rs:
+        eq += r; peak = max(peak, eq); dd = max(dd, peak - eq)
+    return dd
+
+
+def summarize_trades(trades: Sequence[Trade]) -> Dict[str, Any]:
+    rs = [float(t.r_net) for t in trades]
+    wins = sum(1 for x in rs if x > 0); losses = sum(1 for x in rs if x < 0)
+    pos = sum(x for x in rs if x > 0); neg = abs(sum(x for x in rs if x < 0))
+    pf = pos / neg if neg > 1e-12 else None
+    symbols: Dict[str, List[float]] = {}
+    for t in trades:
+        symbols.setdefault(t.symbol, []).append(t.r_net)
+    by_symbol = {}
+    for sym, vals in symbols.items():
+        by_symbol[sym] = {
+            "n": len(vals),
+            "expectancy_r": round(sum(vals) / len(vals), 5) if vals else None,
+            "wins": sum(1 for v in vals if v > 0),
+        }
+    return {
+        "n_rows": len(trades), "resolved": len(trades), "wins": wins, "losses": losses,
+        "win_rate_pct": round(wins / len(rs) * 100.0, 2) if rs else None,
+        "expectancy_r": round(sum(rs) / len(rs), 5) if rs else None,
+        "profit_factor": round(pf, 4) if pf is not None else None,
+        "profit_factor_degenerate": bool(rs and pf is None and pos > 0),
+        "max_drawdown_r": round(_drawdown(rs), 4) if rs else None,
+        "avg_mfe_r": round(sum(t.mfe_r for t in trades) / len(trades), 4) if trades else None,
+        "avg_mae_r": round(sum(t.mae_r for t in trades) / len(trades), 4) if trades else None,
+        "symbols": sorted(symbols), "by_symbol": by_symbol,
+        "net_evidence_count": len(trades), "net_evidence_pct": 100.0 if trades else 0.0,
+        "cost_model": "MODELED_FEES_SLIPPAGE_AND_FUNDING_STRESS",
+    }
+
+
+def temporal_metrics(trades: Sequence[Trade]) -> Dict[str, Any]:
+    ordered = sorted(trades, key=lambda t: (t.signal_ts, t.symbol))
+    n = len(ordered)
+    a = max(1, int(n * 0.60)) if n else 0
+    b = max(a, int(n * 0.80)) if n else 0
+    discovery = ordered[:a]
+    selection_holdout = ordered[a:b]
+    final_oos = ordered[b:]
+    # Three contiguous final checks over the latter 40%, not used to rank.
+    wf = []
+    tail = ordered[a:]
+    if len(tail) >= 9:
+        step = max(1, len(tail) // 3)
+        for k in range(3):
+            chunk = tail[k * step: (k + 1) * step if k < 2 else len(tail)]
+            if chunk:
+                wf.append({"fold": k + 1, "holdout": summarize_trades(chunk)})
+    positive = [x for x in wf if (x.get("holdout") or {}).get("expectancy_r") is not None and (x.get("holdout") or {}).get("expectancy_r") > 0]
+    return {
+        "all": summarize_trades(ordered),
+        "train": summarize_trades(discovery),
+        "selection_holdout": summarize_trades(selection_holdout),
+        # Existing Validation consumes `validation`; here it means untouched Final OOS.
+        "validation": summarize_trades(final_oos),
+        "walk_forward": {
+            "folds": wf, "valid_folds": len(wf), "positive_folds": len(positive),
+            "positive_fold_ratio": round(len(positive) / len(wf), 4) if wf else None,
+        },
+        "methodology": {
+            "evidence_type": "CAUSAL_CANDLE_REPLAY",
+            "discovery_label": "DISCOVERY_60",
+            "selection_label": "SELECTION_HOLDOUT_20",
+            "validation_label": "UNTOUCHED_FINAL_OOS_20",
+            "causal_candle_replay": True,
+            "same_bar_tp_sl": "CONSERVATIVE_SL_FIRST",
+        },
+    }
+
+
+def selection_score(metrics: Dict[str, Any]) -> float:
+    train = metrics.get("train") or {}; hold = metrics.get("selection_holdout") or {}
+    hn = int(hold.get("resolved") or 0); tn = int(train.get("resolved") or 0)
+    he = hold.get("expectancy_r"); hp = hold.get("profit_factor"); dd = hold.get("max_drawdown_r")
+    te = train.get("expectancy_r")
+    if hn <= 0 or he is None:
+        return -999.0
+    pf_term = min(2.0, float(hp)) if hp is not None else 0.0
+    dd_penalty = min(3.0, float(dd or 0.0)) * 0.05
+    stability = -abs(float(he) - float(te or 0.0)) * 0.20
+    return float(he) * min(1.0, hn / 12.0) + 0.12 * pf_term + 0.10 * float(te or 0.0) * min(1.0, tn / 30.0) + stability - dd_penalty

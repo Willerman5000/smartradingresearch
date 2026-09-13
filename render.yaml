@@ -4,7 +4,7 @@ services:
     runtime: python
     plan: free
     buildCommand: pip install --no-cache-dir -r requirements.txt
-    startCommand: gunicorn app:app --workers 1 --threads 1 --worker-class gthread --timeout 300 --graceful-timeout 30 --max-requests 80 --max-requests-jitter 10
+    startCommand: gunicorn app:app --workers 1 --threads 1 --worker-class gthread --timeout 600 --graceful-timeout 45
     healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
@@ -13,8 +13,16 @@ services:
         value: execution
       - key: RESEARCH_AUTO_INTERVAL_MINUTES
         value: 120
+      - key: RESEARCH_BOOT_DELAY_SECONDS
+        value: 45
       - key: RESEARCH_MEMORY_HARD_MB
-        value: 350
+        value: 430
+      - key: RESEARCH_CAUSAL_MEMORY_TARGET_MB
+        value: 390
+      - key: RESEARCH_CAUSAL_MAX_BARS
+        value: 12000
+      - key: RESEARCH_CAUSAL_CACHE_MB
+        value: 270
       - key: CENTRAL_SUPABASE_URL
         sync: false
       - key: CENTRAL_SUPABASE_SERVICE_KEY
@@ -22,14 +30,14 @@ services:
       - key: RESEARCH_RUN_TOKEN
         sync: false
       - key: RESEARCH_DASHBOARD_MAX_ROWS
-        value: 120
+        value: 180
 
   - type: web
     name: research-risk
     runtime: python
     plan: free
     buildCommand: pip install --no-cache-dir -r requirements.txt
-    startCommand: gunicorn app:app --workers 1 --threads 1 --worker-class gthread --timeout 300 --graceful-timeout 30 --max-requests 80 --max-requests-jitter 10
+    startCommand: gunicorn app:app --workers 1 --threads 1 --worker-class gthread --timeout 600 --graceful-timeout 45
     healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
@@ -37,9 +45,17 @@ services:
       - key: RESEARCH_ENGINE
         value: risk
       - key: RESEARCH_AUTO_INTERVAL_MINUTES
-        value: 180
+        value: 150
+      - key: RESEARCH_BOOT_DELAY_SECONDS
+        value: 75
       - key: RESEARCH_MEMORY_HARD_MB
-        value: 350
+        value: 430
+      - key: RESEARCH_CAUSAL_MEMORY_TARGET_MB
+        value: 390
+      - key: RESEARCH_CAUSAL_MAX_BARS
+        value: 10000
+      - key: RESEARCH_CAUSAL_CACHE_MB
+        value: 250
       - key: CENTRAL_SUPABASE_URL
         sync: false
       - key: CENTRAL_SUPABASE_SERVICE_KEY
@@ -47,14 +63,14 @@ services:
       - key: RESEARCH_RUN_TOKEN
         sync: false
       - key: RESEARCH_DASHBOARD_MAX_ROWS
-        value: 120
+        value: 180
 
   - type: web
     name: research-strategy
     runtime: python
     plan: free
     buildCommand: pip install --no-cache-dir -r requirements.txt
-    startCommand: gunicorn app:app --workers 1 --threads 1 --worker-class gthread --timeout 300 --graceful-timeout 30 --max-requests 80 --max-requests-jitter 10
+    startCommand: gunicorn app:app --workers 1 --threads 1 --worker-class gthread --timeout 600 --graceful-timeout 45
     healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
@@ -62,9 +78,17 @@ services:
       - key: RESEARCH_ENGINE
         value: strategy
       - key: RESEARCH_AUTO_INTERVAL_MINUTES
-        value: 240
+        value: 180
+      - key: RESEARCH_BOOT_DELAY_SECONDS
+        value: 105
       - key: RESEARCH_MEMORY_HARD_MB
-        value: 350
+        value: 430
+      - key: RESEARCH_CAUSAL_MEMORY_TARGET_MB
+        value: 390
+      - key: RESEARCH_CAUSAL_MAX_BARS
+        value: 8000
+      - key: RESEARCH_CAUSAL_CACHE_MB
+        value: 230
       - key: CENTRAL_SUPABASE_URL
         sync: false
       - key: CENTRAL_SUPABASE_SERVICE_KEY
@@ -72,14 +96,14 @@ services:
       - key: RESEARCH_RUN_TOKEN
         sync: false
       - key: RESEARCH_DASHBOARD_MAX_ROWS
-        value: 120
+        value: 180
 
   - type: web
     name: research-traders
     runtime: python
     plan: free
     buildCommand: pip install --no-cache-dir -r requirements.txt
-    startCommand: gunicorn app:app --workers 1 --threads 1 --worker-class gthread --timeout 300 --graceful-timeout 30 --max-requests 80 --max-requests-jitter 10
+    startCommand: gunicorn app:app --workers 1 --threads 1 --worker-class gthread --timeout 600 --graceful-timeout 45
     healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
@@ -87,9 +111,17 @@ services:
       - key: RESEARCH_ENGINE
         value: traders
       - key: RESEARCH_AUTO_INTERVAL_MINUTES
-        value: 240
+        value: 180
+      - key: RESEARCH_BOOT_DELAY_SECONDS
+        value: 135
       - key: RESEARCH_MEMORY_HARD_MB
-        value: 350
+        value: 430
+      - key: RESEARCH_CAUSAL_MEMORY_TARGET_MB
+        value: 390
+      - key: RESEARCH_CAUSAL_MAX_BARS
+        value: 5000
+      - key: RESEARCH_CAUSAL_CACHE_MB
+        value: 210
       - key: CENTRAL_SUPABASE_URL
         sync: false
       - key: CENTRAL_SUPABASE_SERVICE_KEY
@@ -97,14 +129,14 @@ services:
       - key: RESEARCH_RUN_TOKEN
         sync: false
       - key: RESEARCH_DASHBOARD_MAX_ROWS
-        value: 120
+        value: 180
 
   - type: web
     name: research-validation
     runtime: python
     plan: free
     buildCommand: pip install --no-cache-dir -r requirements.txt
-    startCommand: gunicorn app:app --workers 1 --threads 1 --worker-class gthread --timeout 300 --graceful-timeout 30 --max-requests 80 --max-requests-jitter 10
+    startCommand: gunicorn app:app --workers 1 --threads 1 --worker-class gthread --timeout 600 --graceful-timeout 45
     healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
@@ -112,9 +144,13 @@ services:
       - key: RESEARCH_ENGINE
         value: validation
       - key: RESEARCH_AUTO_INTERVAL_MINUTES
-        value: 360
+        value: 240
+      - key: RESEARCH_BOOT_DELAY_SECONDS
+        value: 240
       - key: RESEARCH_MEMORY_HARD_MB
-        value: 350
+        value: 380
+      - key: RESEARCH_CAUSAL_ENABLED
+        value: 0
       - key: CENTRAL_SUPABASE_URL
         sync: false
       - key: CENTRAL_SUPABASE_SERVICE_KEY
@@ -122,4 +158,4 @@ services:
       - key: RESEARCH_RUN_TOKEN
         sync: false
       - key: RESEARCH_DASHBOARD_MAX_ROWS
-        value: 120
+        value: 240

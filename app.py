@@ -14,6 +14,9 @@ import config
 from db import RestDB, since_iso, utc_now
 from engines import ENGINES
 from engines.base import rss_mb, balanced_current_rows, source_coverage
+from coverage_optimizer import analyze_coverage_for_engine
+from exchange_flow import current_exchange_flow_finding
+from historical_market import cache_stats as causal_cache_stats
 
 app = Flask(__name__)
 central = RestDB(config.CENTRAL_URL, config.CENTRAL_KEY)
@@ -25,7 +28,7 @@ _state = {
     'running': False, 'last_started_at': None, 'last_finished_at': None,
     'last_error': None, 'last_run_id': None, 'last_source_rows': 0,
     'last_findings': 0, 'last_rss_mb': 0.0, 'last_source_coverage': {},
-    'last_ai_proposals': 0,
+    'last_ai_proposals': 0, 'last_causal_cells': 0, 'last_causal_profitable': 0,
 }
 
 
@@ -283,14 +286,22 @@ def _compact_metric(row):
 def _markdown_report(items):
     title = f'Research Federation · {config.ENGINE.upper()} · {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}'
     lines=[f'# {title}', '', f'- Versión: {config.VERSION}', f'- Autoridad: RESEARCH_ONLY', f'- RSS actual: {rss_mb():.1f} MB', f'- Elementos mostrados: {len(items)}', '']
+    causal=[x for x in items if str(x.get('experiment') or '')=='CAUSAL_COVERAGE_STRATEGY']
+    if causal:
+        filled=sum(1 for x in causal if str((x.get('meta') or {}).get('coverage_status') or '')=='SIMULATED_PROFITABLE')
+        lines += ['## Commit I · Cobertura de rentabilidad causal', f'- Celdas causales visibles: {len(causal)}', f'- Rentables simuladas antes de Validation: {filled}', '> Discovery 60% → Selection Holdout 20% → Final OOS 20%. El OOS final nunca se usa para elegir la estrategia.', '']
+        for it in sorted(causal, key=lambda x: str((x.get('scope') or {}).get('timeframe') or '')):
+            meta=it.get('meta') or {}; cell=meta.get('coverage_cell') or {}; val=(it.get('metrics') or {}).get('validation') or {}; allm=(it.get('metrics') or {}).get('all') or {}
+            lines.append(f"- {meta.get('coverage_status')} | {cell.get('market_family')} {cell.get('symbol')} {cell.get('timeframe')} | {meta.get('causal_strategy_family')} | N={allm.get('resolved')} | OOS.N={val.get('resolved')} | OOS.Exp.R={val.get('expectancy_r')} | OOS.PF={val.get('profit_factor')}")
+        lines.append('')
     ordered=sorted(items, key=lambda x: ((x.get('validation_expectancy_r') is not None), x.get('validation_expectancy_r') or -999, x.get('validation_n') or 0), reverse=True)
-    lines.append('## Evidencia principal · Discovery / Holdout temporal')
-    lines.append('> Nota: RF V1.3 mide atribución observacional. No presenta estas filas como replay causal de velas.')
-    for it in ordered[:20]:
+    lines.append('## Evidencia principal')
+    lines.append('> Filas CAUSAL_COVERAGE_STRATEGY son replay causal. Las demás conservan atribución observacional con holdout temporal.')
+    for it in ordered[:25]:
         scope=', '.join(f'{k}={v}' for k,v in (it.get('scope') or {}).items())
-        lines.append(f"- {it.get('stage')} | {it.get('experiment')} | {scope} | Discovery.N={it.get('resolved')} | Holdout.N={it.get('validation_n')} | Discovery.Exp.R={it.get('expectancy_r')} | Holdout.Exp.R={it.get('validation_expectancy_r')} | PF.Holdout={it.get('validation_profit_factor')}")
+        lines.append(f"- {it.get('stage')} | {it.get('experiment')} | {scope} | N={it.get('resolved')} | OOS/Holdout.N={it.get('validation_n')} | Exp.R={it.get('expectancy_r')} | OOS/Holdout.Exp.R={it.get('validation_expectancy_r')} | PF={it.get('validation_profit_factor')}")
     if config.ENGINE == 'validation':
-        lines += ['', '## Nota de gobernanza', 'Validation sólo clasifica evidencia y recomienda Shadow/Canary. No concede autoridad de producción ni garantiza rentabilidad futura.']
+        lines += ['', '## Nota de gobernanza', 'Validation clasifica evidencia causal y observacional y recomienda Shadow/Canary. No concede autoridad productiva ni garantiza rentabilidad futura.']
     return '\n'.join(lines)
 
 
@@ -351,9 +362,27 @@ def _run_job(days: int, max_rows: int):
                     findings = _engine.analyze(rows, ai_proposals=ai_proposals)
                 else:
                     findings = _engine.analyze(rows)
+
+                # Commit I: every analytical Render owns distinct causal cells,
+                # using its own RAM instead of concentrating backtesting in one service.
+                causal_findings = analyze_coverage_for_engine(config.ENGINE)
+                _state['last_causal_cells'] = len(causal_findings)
+                _state['last_causal_profitable'] = sum(
+                    1 for x in causal_findings
+                    if str((x.get('meta') or {}).get('coverage_status') or '') == 'SIMULATED_PROFITABLE'
+                )
+                findings.extend(causal_findings)
+
+                # Current CEX reserve/flow context belongs to Strategy Research,
+                # never to promotion by itself. It is fail-open and optional.
+                if config.ENGINE == 'strategy':
+                    flow = current_exchange_flow_finding()
+                    if flow:
+                        findings.append(flow)
+
                 finding_count = len(findings)
                 _persist_findings(findings, run_id, fingerprint)
-                del rows, findings
+                del rows, findings, causal_findings
             try:
                 central.rpc('cleanup_research_federation_v1', {})
             except Exception:
@@ -395,6 +424,7 @@ def health():
         'ok': True, 'engine': config.ENGINE, 'version': config.VERSION,
         'authority': 'RESEARCH_ONLY', 'running': _state['running'],
         'rss_mb': round(rss_mb(),2), 'central_db': central.ready, 'private_db': private.ready,
+        'causal_cache': causal_cache_stats(),
     })
 
 
@@ -431,8 +461,8 @@ def dashboard_api():
             'ok': True, 'engine': config.ENGINE, 'version': config.VERSION,
             'authority': 'RESEARCH_ONLY', 'rss_mb': round(rss_mb(),2),
             'running': _state['running'], 'stages': stages, 'items': items,
-            'coverage': source_coverage(rows),
-            'last_run': {k:_state.get(k) for k in ('last_started_at','last_finished_at','last_error','last_source_rows','last_findings','last_source_coverage','last_ai_proposals')},
+            'coverage': source_coverage(rows), 'causal_cache': causal_cache_stats(),
+            'last_run': {k:_state.get(k) for k in ('last_started_at','last_finished_at','last_error','last_source_rows','last_findings','last_source_coverage','last_ai_proposals','last_causal_cells','last_causal_profitable')},
         })
     except Exception as exc:
         return jsonify({'ok':False,'engine':config.ENGINE,'error':str(exc)[:240]}), 500
