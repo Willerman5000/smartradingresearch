@@ -35,13 +35,15 @@ def test_causal_replay_produces_net_metrics_without_lookahead():
     assert metrics['all']['net_evidence_pct'] == 100.0
 
 
-def test_commit_i_lanes_cover_all_18_cells_once():
+def test_commit_i2_lanes_cover_all_54_symbol_tf_cells_once():
     cells=[cell for engine,cells in LANES.items() for cell in cells]
-    assert len(cells) == 18
-    assert len(set(cells)) == 18
+    assert len(cells) == 54
+    assert len(set(cells)) == 54
     futures=[x for x in cells if x[0]=='futures']
     spot=[x for x in cells if x[0]=='spot']
     assert {x[3] for x in futures} == {'5M','15M','30M','1H','2H','4H'}
+    assert len(futures) == 42
+    assert {x[2] for x in futures} == {'BTC-USDT','ETH-USDT','SOL-USDT','XRP-USDT','ADA-USDT','LINK-USDT','BNB-USDT'}
     assert len(spot) == 12
     assert {x[2] for x in spot} == {'BTC-USDT','PAXG-USDT','PAXG-BTC'}
 
@@ -56,7 +58,7 @@ def _causal_row(tf='30M', oos_n=14, exp=0.28, pf=1.45):
     return {
         'engine':'risk','experiment':'CAUSAL_COVERAGE_STRATEGY','feature_key':'ci:test',
         'research_version':config.VERSION,
-        'scope':{'market_family':'CRYPTO_FUTURES','timeframe':tf,'direction':'SHORT','regime':'TREND_DOWN'},
+        'scope':{'market_family':'CRYPTO_FUTURES','symbol':'BTC-USDT','timeframe':tf,'direction':'SHORT','regime':'TREND_DOWN'},
         'meta':{'is_current':True,'causal_candle_replay':True,'runtime_contract':{'runtime_trackable':True}},
         'metrics':{
             'all':{'resolved':80,'symbols':list(by_symbol),'net_evidence_pct':100.0,'expectancy_r':0.31,'profit_factor':1.55},
@@ -71,7 +73,8 @@ def test_validation_promotes_strong_causal_futures_to_shadow_ready():
     assert len(out)==1
     assert out[0]['stage'] in {'SHADOW_READY','SHADOW_READY_FAST'}
     assert out[0]['meta']['causal_strategy'] is True
-    assert out[0]['meta']['causal_cross_asset']['positive_symbols_oos'] >= 3
+    assert out[0]['meta']['causal_cross_asset']['required'] is False
+    assert out[0]['meta']['symbol_timeframe_specialist'] is True
 
 
 def test_validation_rejects_negative_causal_oos():

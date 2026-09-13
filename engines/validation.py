@@ -33,18 +33,24 @@ def _stability(metrics: Dict[str, Any]) -> tuple[int, float | None]:
 
 
 def _causal_cross_asset_ok(row: Dict[str, Any], metrics: Dict[str, Any], scope: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]]:
+    """I.2 validates each Futures symbol×TF cell on its own evidence.
+
+    Cross-asset robustness is useful for a generic pooled strategy, but the user
+    explicitly requires a specialist for BTC, ETH, SOL, XRP, ADA, LINK and BNB
+    independently. Requiring three symbols inside a single-symbol replay would
+    make every valid specialist impossible by construction.
+    """
     fam=str(scope.get("market_family") or "")
-    if fam != "CRYPTO_FUTURES":
-        return True, {"required":False}
+    symbol=str(scope.get("symbol") or "ALL").upper()
+    if fam != "CRYPTO_FUTURES" or symbol not in {"", "ALL"}:
+        return True, {"required":False,"mode":"SYMBOL_SPECIALIST","symbol":symbol}
     val=(metrics.get("validation") or {})
     by_symbol=val.get("by_symbol") or {}
     tested=len(by_symbol)
     positive=[k for k,v in by_symbol.items() if num((v or {}).get("expectancy_r"),-999) > 0]
-    # Final OOS may be thin per symbol. Require at least three symbols represented
-    # and at least half positive; Shadow live remains the next stronger test.
     needed=max(2, min(4, (tested + 1)//2))
     ok=tested>=3 and len(positive)>=needed
-    return ok, {"required":True,"symbols_tested_oos":tested,"positive_symbols_oos":len(positive),"positive_names_oos":positive,"minimum_positive":needed}
+    return ok, {"required":True,"mode":"POOLED_FUTURES","symbols_tested_oos":tested,"positive_symbols_oos":len(positive),"positive_names_oos":positive,"minimum_positive":needed}
 
 
 def analyze_findings(rows: List[Dict[str,Any]]) -> List[Dict[str,Any]]:
@@ -161,6 +167,9 @@ def analyze_findings(rows: List[Dict[str,Any]]) -> List[Dict[str,Any]]:
             "causal_cross_asset": cross_meta,
             "generated_strategy_requires_strict_evidence": strict_generated,
             "ai_proposal_requires_strict_net_evidence": bool(is_ai_proposal),
+            "symbol_timeframe_specialist": bool(is_causal and str(scope.get("symbol") or "ALL").upper() not in {"", "ALL"}),
+            "finalist_rank_selection_only": row_meta.get("finalist_rank_selection_only"),
+            "finalists_predeclared_for_oos": row_meta.get("finalists_predeclared_for_oos"),
         })
         promotions.append({
             "candidate_key":str(row.get("feature_key") or "")[:500],

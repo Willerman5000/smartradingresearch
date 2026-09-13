@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-"""Causal candle replay for Research Federation V1.6.
+"""Causal candle replay for Research Federation V1.7.
 
-The strategy decision at bar i uses only data <= i. Entry can occur only on
-later bars. Same-bar SL+TP ambiguity is resolved conservatively as SL first.
-Candidate selection uses Discovery + Selection Holdout; Final OOS is never used
-to rank candidates.
+Commit I.2 keeps the Final OOS lockbox untouched by candidate ranking while
+expanding the *pre-declared* strategy universe used for each symbol×timeframe
+specialist.  A candidate can be selected only from Discovery + Selection
+Holdout. Final OOS is read afterwards by Validation.
+
+The extra filters are deliberately simple and causal (EMA/ATR/RSI/volume). They
+exist to let a cell abstain in regimes where its family historically had no
+edge rather than forcing one generic strategy to trade every condition.
 """
 
 from collections import deque
@@ -34,13 +38,17 @@ class StrategySpec:
     rr: float = 2.0
     max_wait: int = 3
     max_hold: int = 24
+    # I.2: bounded specialist filters. They are evaluated with data <= bar i.
+    volatility_mode: str = "ANY"  # ANY | QUIET | NORMAL | EXPANSION
+    trend_strength_min: float = 0.0  # abs(EMAfast-EMAslow)/ATR
 
     def key(self) -> str:
         return (
             f"{self.family}:{self.direction_mode}:f{self.fast}:s{self.slow}:"
             f"r{self.rsi_len}:{self.rsi_low:g}-{self.rsi_high:g}:lb{self.lookback}:"
             f"v{self.volume_mult:g}:{self.entry_style}:{self.entry_atr:g}:"
-            f"sl{self.sl_atr:g}:rr{self.rr:g}:w{self.max_wait}:h{self.max_hold}"
+            f"sl{self.sl_atr:g}:rr{self.rr:g}:w{self.max_wait}:h{self.max_hold}:"
+            f"vol{self.volatility_mode}:ts{self.trend_strength_min:g}"
         )
 
 
@@ -125,11 +133,15 @@ def _rolling_mean(values: Sequence[float], period: int) -> List[float]:
 def features(candles: Sequence[Candle], spec: StrategySpec) -> Dict[str, List[float]]:
     closes = [c.close for c in candles]
     volumes = [c.volume for c in candles]
+    atr = _atr(candles, 14)
+    atr_pct = [float(a) / max(abs(float(c.close)), 1e-12) for a, c in zip(atr, candles)]
     return {
         "ema_fast": _ema(closes, spec.fast),
         "ema_slow": _ema(closes, spec.slow),
         "rsi": _rsi(closes, spec.rsi_len),
-        "atr": _atr(candles, 14),
+        "atr": atr,
+        "atr_pct": atr_pct,
+        "atr_pct_ma": _rolling_mean(atr_pct, 100),
         "volume_ma": _rolling_mean(volumes, 20),
     }
 
@@ -145,15 +157,37 @@ def _regime(i: int, feat: Dict[str, List[float]], candles: Sequence[Candle]) -> 
     return "BALANCE"
 
 
+def _volatility_ok(i: int, spec: StrategySpec, feat: Dict[str, List[float]]) -> bool:
+    mode = str(spec.volatility_mode or "ANY").upper()
+    if mode == "ANY":
+        return True
+    baseline = max(float(feat["atr_pct_ma"][i] or 0.0), 1e-12)
+    ratio = float(feat["atr_pct"][i] or 0.0) / baseline
+    if mode == "QUIET":
+        return ratio <= 0.82
+    if mode == "NORMAL":
+        return 0.72 <= ratio <= 1.35
+    if mode == "EXPANSION":
+        return ratio >= 1.18
+    return True
+
+
 def _direction_signal(i: int, spec: StrategySpec, feat: Dict[str, List[float]], candles: Sequence[Candle]) -> Tuple[str | None, Dict[str, Any]]:
-    if i < max(spec.slow, spec.lookback, spec.rsi_len) + 2:
+    if i < max(spec.slow, spec.lookback, spec.rsi_len, 100) + 2:
         return None, {}
     c = candles[i]
     prev = candles[i - 1]
     fast = feat["ema_fast"][i]; slow = feat["ema_slow"][i]
+    prev_fast = feat["ema_fast"][i - 1]
     rsi = feat["rsi"][i]
     atr = max(feat["atr"][i], c.close * 1e-6)
     regime = _regime(i, feat, candles)
+    trend_strength = abs(fast - slow) / atr
+    if trend_strength + 1e-12 < max(0.0, float(spec.trend_strength_min or 0.0)):
+        return None, {"regime": regime, "trend_strength": round(trend_strength, 4)}
+    if not _volatility_ok(i, spec, feat):
+        return None, {"regime": regime, "trend_strength": round(trend_strength, 4)}
+
     vma = max(1e-12, feat["volume_ma"][i])
     volume_ok = c.volume >= vma * spec.volume_mult
     prior = candles[max(0, i - spec.lookback):i]
@@ -165,16 +199,16 @@ def _direction_signal(i: int, spec: StrategySpec, feat: Dict[str, List[float]], 
     sweep_high = c.high > prior_high and c.close < prior_high
 
     direction = None
-    fam = spec.family
+    fam = str(spec.family or "").upper()
     if fam == "TREND_CONTINUATION":
-        if regime == "TREND_UP" and c.close > fast and rsi >= 50:
+        if regime == "TREND_UP" and c.close > fast and rsi >= max(50.0, spec.rsi_low):
             direction = "LONG"
-        elif regime == "TREND_DOWN" and c.close < fast and rsi <= 50:
+        elif regime == "TREND_DOWN" and c.close < fast and rsi <= min(50.0, spec.rsi_high):
             direction = "SHORT"
     elif fam == "TREND_PULLBACK":
-        if pullback_long and rsi >= 45:
+        if pullback_long and rsi >= max(43.0, spec.rsi_low):
             direction = "LONG"
-        elif pullback_short and rsi <= 55:
+        elif pullback_short and rsi <= min(57.0, spec.rsi_high):
             direction = "SHORT"
     elif fam == "BREAKOUT_RETEST":
         if prev.close <= prior_high and c.close > prior_high and volume_ok:
@@ -187,9 +221,24 @@ def _direction_signal(i: int, spec: StrategySpec, feat: Dict[str, List[float]], 
         elif regime == "BALANCE" and rsi >= spec.rsi_high and c.close >= fast + 0.45 * atr:
             direction = "SHORT"
     elif fam == "SWEEP_REVERSAL":
-        if sweep_low and rsi <= 48:
+        if sweep_low and rsi <= min(50.0, spec.rsi_high):
             direction = "LONG"
-        elif sweep_high and rsi >= 52:
+        elif sweep_high and rsi >= max(50.0, spec.rsi_low):
+            direction = "SHORT"
+    elif fam == "EMA_RECLAIM":
+        if regime == "TREND_UP" and prev.close < prev_fast and c.close > fast and rsi >= 48:
+            direction = "LONG"
+        elif regime == "TREND_DOWN" and prev.close > prev_fast and c.close < fast and rsi <= 52:
+            direction = "SHORT"
+    elif fam == "RSI_TREND":
+        if regime == "TREND_UP" and c.close > fast and rsi >= spec.rsi_high:
+            direction = "LONG"
+        elif regime == "TREND_DOWN" and c.close < fast and rsi <= spec.rsi_low:
+            direction = "SHORT"
+    elif fam == "MOMENTUM_BREAKOUT":
+        if regime == "TREND_UP" and c.close > prev.high and rsi >= spec.rsi_high and volume_ok:
+            direction = "LONG"
+        elif regime == "TREND_DOWN" and c.close < prev.low and rsi <= spec.rsi_low and volume_ok:
             direction = "SHORT"
 
     if spec.direction_mode in {"LONG", "SHORT"} and direction != spec.direction_mode:
@@ -198,6 +247,8 @@ def _direction_signal(i: int, spec: StrategySpec, feat: Dict[str, List[float]], 
         "regime": regime,
         "has_pullback": "YES" if (pullback_long or pullback_short) else "NO",
         "has_sweep": "YES" if (sweep_low or sweep_high) else "NO",
+        "trend_strength": round(trend_strength, 4),
+        "volatility_mode": str(spec.volatility_mode or "ANY").upper(),
     }
     return direction, ctx
 
@@ -210,7 +261,6 @@ def _cost_r(entry: float, stop: float, bars_held: int, system_type: str, seconds
         bps = float(getattr(config, "CAUSAL_SPOT_ROUNDTRIP_BPS", 20)) + float(getattr(config, "CAUSAL_SPOT_SLIPPAGE_BPS", 4))
         return (bps / 10000.0) / risk_pct
     bps = float(getattr(config, "CAUSAL_FUTURES_ROUNDTRIP_BPS", 12)) + float(getattr(config, "CAUSAL_FUTURES_SLIPPAGE_BPS", 6))
-    # Conservative modeled funding stress proportional to 8h blocks held.
     funding_bps = float(getattr(config, "CAUSAL_FUNDING_STRESS_BPS_8H", 1.0))
     hours_per_bar = max(1.0 / 60.0, float(seconds_per_bar) / 3600.0)
     funding_blocks = max(0.0, bars_held * hours_per_bar / 8.0)
@@ -218,13 +268,13 @@ def _cost_r(entry: float, stop: float, bars_held: int, system_type: str, seconds
 
 
 def replay_series(symbol: str, system_type: str, candles: Sequence[Candle], spec: StrategySpec) -> Tuple[List[Trade], Dict[str, int]]:
-    if len(candles) < max(80, spec.slow + spec.lookback + 20):
+    if len(candles) < max(140, spec.slow + spec.lookback + 110):
         return [], {"signals": 0, "activated": 0}
     feat = features(candles, spec)
     seconds_per_bar = max(60, int(candles[1].ts - candles[0].ts)) if len(candles) > 1 else 3600
     trades: List[Trade] = []
     signals = activated = 0
-    i = max(spec.slow, spec.lookback, spec.rsi_len) + 2
+    i = max(spec.slow, spec.lookback, spec.rsi_len, 100) + 2
     n = len(candles)
     while i < n - 2:
         direction, _ctx = _direction_signal(i, spec, feat, candles)
@@ -327,7 +377,6 @@ def temporal_metrics(trades: Sequence[Trade]) -> Dict[str, Any]:
     discovery = ordered[:a]
     selection_holdout = ordered[a:b]
     final_oos = ordered[b:]
-    # Three contiguous final checks over the latter 40%, not used to rank.
     wf = []
     tail = ordered[a:]
     if len(tail) >= 9:
@@ -341,7 +390,6 @@ def temporal_metrics(trades: Sequence[Trade]) -> Dict[str, Any]:
         "all": summarize_trades(ordered),
         "train": summarize_trades(discovery),
         "selection_holdout": summarize_trades(selection_holdout),
-        # Existing Validation consumes `validation`; here it means untouched Final OOS.
         "validation": summarize_trades(final_oos),
         "walk_forward": {
             "folds": wf, "valid_folds": len(wf), "positive_folds": len(positive),
@@ -359,6 +407,7 @@ def temporal_metrics(trades: Sequence[Trade]) -> Dict[str, Any]:
 
 
 def selection_score(metrics: Dict[str, Any]) -> float:
+    """Ranking uses Discovery + Selection only. Final OOS is never read here."""
     train = metrics.get("train") or {}; hold = metrics.get("selection_holdout") or {}
     hn = int(hold.get("resolved") or 0); tn = int(train.get("resolved") or 0)
     he = hold.get("expectancy_r"); hp = hold.get("profit_factor"); dd = hold.get("max_drawdown_r")

@@ -15,7 +15,8 @@ from db import RestDB, since_iso, utc_now
 from engines import ENGINES
 from engines.base import rss_mb, balanced_current_rows, source_coverage
 from coverage_optimizer import (
-    analyze_coverage_for_engine, all_coverage_cells, owner_for_cell, coverage_cell_id, optimize_cell, retest_registry_promotions
+    analyze_coverage_for_engine, all_coverage_cells, owner_for_cell, coverage_cell_id,
+    optimize_cell, optimize_cell_candidates, retest_registry_promotions
 )
 from exchange_flow import current_exchange_flow_finding
 from historical_market import cache_stats as causal_cache_stats
@@ -245,6 +246,41 @@ def _persist_findings(findings, run_id: str, dataset_fingerprint: str):
 
 
 
+def _stage_priority(stage):
+    return {
+        'SHADOW_READY_FAST': 60, 'SHADOW_READY': 55,
+        'VALIDATION_REQUIRED': 40, 'VALIDATED_SINGLE_ASSET': 38,
+        'OBSERVE': 25, 'REJECTED_OOS': 10, 'STALE': 0,
+    }.get(str(stage or '').upper(), 20)
+
+
+def _best_causal_per_cell(rows):
+    """One representative per symbol×TF cell for coverage/UI only.
+
+    All finalists remain persisted and available to Validation; this helper
+    prevents 4 finalists from making a 54-cell matrix look like 216 cells.
+    """
+    best={}
+    for row in rows or []:
+        meta=row.get('meta') or {}
+        cid=str(meta.get('coverage_cell_id') or '')
+        if not cid:
+            continue
+        metrics=row.get('metrics') or {}
+        val=metrics.get('validation') or {}
+        score=(
+            _stage_priority(row.get('stage')),
+            float(val.get('expectancy_r') if val.get('expectancy_r') is not None else -999),
+            float(val.get('profit_factor') if val.get('profit_factor') is not None else -999),
+            int(val.get('resolved') or 0),
+            -int(meta.get('finalist_rank_selection_only') or 999),
+        )
+        prev=best.get(cid)
+        if prev is None or score > prev[0]:
+            best[cid]=(score,row)
+    return [x[1] for x in best.values()]
+
+
 def _dashboard_rows():
     """Small read-only payload for the browser. Never loads source trading rows."""
     limit = int(getattr(config, 'DASHBOARD_MAX_ROWS', 120))
@@ -266,10 +302,11 @@ def _dashboard_rows():
         })
     current = [r for r in raw if (r.get('meta') or {}).get('is_current') is True and str(r.get('stage') or '') != 'STALE']
     if config.ENGINE == 'validation':
-        # Commit I.1: the 18 causal cells are contract rows, not optional top-N
-        # decoration. Always keep them visible, then fill the remaining slots.
-        causal=[r for r in current if str(r.get('experiment') or '') == 'CAUSAL_COVERAGE_STRATEGY']
-        rest=[r for r in current if str(r.get('experiment') or '') != 'CAUSAL_COVERAGE_STRATEGY']
+        # I.2: show one representative for each of the 54 symbol×TF cells,
+        # while keeping all pre-declared finalists persisted for Validation.
+        causal_all=[r for r in current if str(r.get('experiment') or '') in {'CAUSAL_COVERAGE_STRATEGY','CAUSAL_REGISTRY_RETEST','CAUSAL_SHADOW_RECYCLE'}]
+        causal=_best_causal_per_cell(causal_all)
+        rest=[r for r in current if r not in causal_all]
         causal.sort(key=lambda r: str(((r.get('meta') or {}).get('coverage_cell_id') or '')))
         remaining=max(0, limit-len(causal))
         return causal[:limit] + balanced_current_rows(rest, remaining)
@@ -305,11 +342,24 @@ def _compact_metric(row):
 def _markdown_report(items):
     title = f'Research Federation · {config.ENGINE.upper()} · {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}'
     lines=[f'# {title}', '', f'- Versión: {config.VERSION}', f'- Autoridad: RESEARCH_ONLY', f'- RSS actual: {rss_mb():.1f} MB', f'- Elementos mostrados: {len(items)}', '']
-    causal=[x for x in items if str(x.get('experiment') or '')=='CAUSAL_COVERAGE_STRATEGY']
+    causal_all=[x for x in items if str(x.get('experiment') or '') in {'CAUSAL_COVERAGE_STRATEGY','CAUSAL_REGISTRY_RETEST','CAUSAL_SHADOW_RECYCLE'}]
+    causal=_best_causal_per_cell(causal_all)
     if causal:
-        filled=sum(1 for x in causal if str((x.get('meta') or {}).get('coverage_status') or '')=='SIMULATED_PROFITABLE')
-        required=int(getattr(config,'CAUSAL_REQUIRED_CELLS',18))
-        lines += ['## Commit I.1 · Cobertura de rentabilidad causal', f'- Celdas causales visibles: {len(causal)}/{required}', f'- Rentables simuladas antes de Validation: {filled}', f'- Cobertura completa: {"SI" if len(causal)>=required else "NO"}', '> Discovery 60% → Selection Holdout 20% → Final OOS 20%. El OOS final nunca se usa para elegir la estrategia.', '']
+        required=int(getattr(config,'CAUSAL_REQUIRED_CELLS',54))
+        selection_positive=sum(1 for x in causal if str((x.get('meta') or {}).get('coverage_status') or '')=='SELECTION_PROFITABLE')
+        oos_positive=sum(1 for x in causal if x.get('validation_expectancy_r') is not None and float(x.get('validation_expectancy_r') or 0)>0 and (x.get('validation_profit_factor') is None or float(x.get('validation_profit_factor') or 0)>1.0))
+        shadow_ready=sum(1 for x in causal if str(x.get('stage') or '') in {'SHADOW_READY','SHADOW_READY_FAST'})
+        lines += [
+            '## Commit I.2 · Cobertura especialista de rentabilidad',
+            f'- Celdas símbolo×temporalidad visibles: {len(causal)}/{required}',
+            f'- Celdas con Selection positiva: {selection_positive}',
+            f'- Celdas con OOS final positivo: {oos_positive}',
+            f'- Celdas SHADOW_READY: {shadow_ready}',
+            f'- Cobertura investigada completa: {"SI" if len(causal)>=required else "NO"}',
+            '> Objetivo: al menos un especialista rentable validado por cada celda. Si una celda no demuestra edge, permanece SEARCHING/VALIDATION y vuelve al ciclo; nunca se fuerza un resultado.',
+            '> Discovery 60% → Selection Holdout 20% → Final OOS 20%. Final OOS no se usa para elegir finalistas.',
+            ''
+        ]
         for it in sorted(causal, key=lambda x: str((x.get('meta') or {}).get('coverage_cell_id') or '')):
             meta=it.get('meta') or {}; cell=meta.get('coverage_cell') or {}
             lines.append(f"- {it.get('stage')} | {cell.get('market_family')} {cell.get('symbol')} {cell.get('timeframe')} | {meta.get('causal_strategy_family')} | N={it.get('resolved')} | OOS.N={it.get('validation_n')} | OOS.Exp.R={it.get('validation_expectancy_r')} | OOS.PF={it.get('validation_profit_factor')}")
@@ -332,7 +382,7 @@ def _current_causal_cell_ids():
             'research_version':f'eq.{config.VERSION}',
             'experiment':'eq.CAUSAL_COVERAGE_STRATEGY',
             'order':'updated_at.desc',
-        }, max_rows=200, page_size=100)
+        }, max_rows=1200, page_size=300)
     except Exception:
         return set()
     out=set()
@@ -347,28 +397,27 @@ def _current_causal_cell_ids():
 
 
 def _rescue_missing_causal_cells(run_id: str):
-    """Validation is the fifth research instance: fill only missing matrix cells.
+    """Validation is the fifth research instance: fill missing 54-cell specialists.
 
-    Normal ownership remains execution/risk/strategy/traders. This rescue makes
-    the 18/18 contract converge even when a free Render worker cold-starts or a
-    long historical download misses the first Validation window.
+    Owners remain execution/risk/strategy/traders. Rescue computes only missing
+    symbol×TF cells and persists all pre-declared finalists.
     """
     if not bool(getattr(config,'CAUSAL_VALIDATION_RESCUE',True)):
         return 0
     present=_current_causal_cell_ids()
     missing=[cell for cell in all_coverage_cells() if coverage_cell_id(cell) not in present]
-    cap=int(getattr(config,'CAUSAL_VALIDATION_RESCUE_MAX_CELLS',18))
+    cap=int(getattr(config,'CAUSAL_VALIDATION_RESCUE_MAX_CELLS',12))
     missing=missing[:cap]
     if not missing:
         return 0
-    print(f'🧯 [I.1 VALIDATION] rescate causal faltantes={len(missing)} presentes={len(present)}/18', flush=True)
+    print(f'🧯 [I.2 VALIDATION] rescate causal faltantes={len(missing)} presentes={len(present)}/{getattr(config, "CAUSAL_REQUIRED_CELLS", 54)}', flush=True)
     done=0
     for cell in missing:
         if rss_mb() >= getattr(config,'MEMORY_HARD_MB',430):
             break
         owner=owner_for_cell(cell)
-        finding=optimize_cell(cell, owner_engine=owner)
-        _upsert_findings([finding], run_id, f'validation-rescue:{coverage_cell_id(cell)}')
+        findings=optimize_cell_candidates(cell, owner_engine=owner)
+        _upsert_findings(findings, run_id, f'validation-rescue:{coverage_cell_id(cell)}')
         done += 1
     return done
 
@@ -379,7 +428,7 @@ def _run_validation(run_id: str):
         'select':'engine,experiment,feature_key,scope,stage,metrics,meta,research_version,updated_at',
         'research_version':f'eq.{config.VERSION}',
         'order':'updated_at.desc',
-    }, max_rows=3000, page_size=500)
+    }, max_rows=6000, page_size=600)
     rows=[r for r in raw if (r.get('meta') or {}).get('is_current') is True and str(r.get('stage') or '')!='STALE']
     promotions = _engine.analyze_findings(rows)
     current_keys={str(p.get('candidate_key') or '') for p in promotions}
@@ -408,17 +457,54 @@ def _run_validation(run_id: str):
 
 
 def _causal_retest_promotions_for_engine(engine: str):
+    """Load incumbents and prioritize those whose Shadow/live diverges."""
     try:
-        return central.select('research_promotions_v1', params={
+        limit=max(30, int(getattr(config,'CAUSAL_REGISTRY_RETEST_LIMIT',16))*4)
+        rows=central.select('research_promotions_v1', params={
             'select':'candidate_key,source_engine,experiment,stage,scope,metrics,meta,research_version,updated_at',
             'source_engine':f'eq.{engine}',
-            'experiment':'eq.CAUSAL_COVERAGE_STRATEGY',
+            'experiment':'in.(CAUSAL_COVERAGE_STRATEGY,CAUSAL_REGISTRY_RETEST,CAUSAL_SHADOW_RECYCLE)',
             'stage':'in.(SHADOW_READY,SHADOW_READY_FAST,VALIDATION_REQUIRED,REJECTED_OOS)',
             'order':'updated_at.desc',
-            'limit':str(int(getattr(config,'CAUSAL_REGISTRY_RETEST_LIMIT',8))*2),
+            'limit':str(limit),
         })
+        try:
+            shadow=central.select('research_shadow_live_metrics_v1', params={
+                'select':'candidate_key,resolved_n,signals_n,expectancy_r,profit_factor,updated_at',
+                'order':'updated_at.desc','limit':'500',
+            })
+        except Exception:
+            shadow=[]
+        smap={}
+        for item in shadow or []:
+            key=str(item.get('candidate_key') or '')
+            if key and key not in smap:
+                smap[key]=item
+        enriched=[]
+        for row in rows or []:
+            meta=dict(row.get('meta') or {})
+            live=smap.get(str(row.get('candidate_key') or '')) or {}
+            target=max(1,int(meta.get('recommended_shadow_target') or 0) or 1)
+            resolved=int(live.get('resolved_n') or 0)
+            exp=live.get('expectancy_r'); pf=live.get('profit_factor')
+            priority=0
+            try:
+                if resolved>=target and (exp is None or float(exp)<=0.05 or (pf is not None and float(pf)<1.05)):
+                    priority=3
+                elif resolved>=max(3,target//2) and exp is not None and float(exp)<=-0.20:
+                    priority=2
+                elif resolved>0:
+                    priority=1
+            except Exception:
+                priority=0
+            meta['shadow_recycle_priority']=priority
+            meta['shadow_live_snapshot']=live
+            row=dict(row); row['meta']=meta
+            enriched.append(row)
+        enriched.sort(key=lambda r:(int((r.get('meta') or {}).get('shadow_recycle_priority') or 0), str(r.get('updated_at') or '')), reverse=True)
+        return enriched
     except Exception as exc:
-        print(f'⚠️ [I.1 RETEST] source: {exc}', flush=True)
+        print(f'⚠️ [I.2 RETEST] source: {exc}', flush=True)
         return []
 
 
@@ -455,11 +541,15 @@ def _run_job(days: int, max_rows: int):
                 def _publish_causal(finding):
                     current_keys.update(_upsert_findings([finding], run_id, fingerprint))
                 causal_findings = analyze_coverage_for_engine(config.ENGINE, on_finding=_publish_causal)
-                _state['last_causal_cells'] = len(causal_findings)
-                _state['last_causal_profitable'] = sum(
-                    1 for x in causal_findings
-                    if str((x.get('meta') or {}).get('coverage_status') or '') == 'SIMULATED_PROFITABLE'
-                )
+                _state['last_causal_cells'] = len({
+                    str((x.get('meta') or {}).get('coverage_cell_id') or '')
+                    for x in causal_findings if (x.get('meta') or {}).get('coverage_cell_id')
+                })
+                _state['last_causal_profitable'] = len({
+                    str((x.get('meta') or {}).get('coverage_cell_id') or '')
+                    for x in causal_findings
+                    if str((x.get('meta') or {}).get('coverage_status') or '') == 'SELECTION_PROFITABLE'
+                })
 
                 # Rebacktest strategies already in Shadow/Validation on the newest
                 # historical window. This is separate from live Shadow evidence.

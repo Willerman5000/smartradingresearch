@@ -12,7 +12,7 @@ services:
       - key: RESEARCH_ENGINE
         value: execution
       - key: RESEARCH_AUTO_INTERVAL_MINUTES
-        value: 120
+        value: 90
       - key: RESEARCH_BOOT_DELAY_SECONDS
         value: 45
       - key: RESEARCH_MEMORY_HARD_MB
@@ -23,6 +23,10 @@ services:
         value: 12000
       - key: RESEARCH_CAUSAL_CACHE_MB
         value: 270
+      - key: RESEARCH_CAUSAL_FINALISTS_PER_CELL
+        value: 4
+      - key: RESEARCH_CAUSAL_REGISTRY_RETEST_LIMIT
+        value: 16
       - key: CENTRAL_SUPABASE_URL
         sync: false
       - key: CENTRAL_SUPABASE_SERVICE_KEY
@@ -45,7 +49,7 @@ services:
       - key: RESEARCH_ENGINE
         value: risk
       - key: RESEARCH_AUTO_INTERVAL_MINUTES
-        value: 150
+        value: 120
       - key: RESEARCH_BOOT_DELAY_SECONDS
         value: 75
       - key: RESEARCH_MEMORY_HARD_MB
@@ -56,6 +60,10 @@ services:
         value: 10000
       - key: RESEARCH_CAUSAL_CACHE_MB
         value: 250
+      - key: RESEARCH_CAUSAL_FINALISTS_PER_CELL
+        value: 4
+      - key: RESEARCH_CAUSAL_REGISTRY_RETEST_LIMIT
+        value: 16
       - key: CENTRAL_SUPABASE_URL
         sync: false
       - key: CENTRAL_SUPABASE_SERVICE_KEY
@@ -89,6 +97,10 @@ services:
         value: 8000
       - key: RESEARCH_CAUSAL_CACHE_MB
         value: 230
+      - key: RESEARCH_CAUSAL_FINALISTS_PER_CELL
+        value: 4
+      - key: RESEARCH_CAUSAL_REGISTRY_RETEST_LIMIT
+        value: 16
       - key: CENTRAL_SUPABASE_URL
         sync: false
       - key: CENTRAL_SUPABASE_SERVICE_KEY
@@ -122,6 +134,10 @@ services:
         value: 5000
       - key: RESEARCH_CAUSAL_CACHE_MB
         value: 210
+      - key: RESEARCH_CAUSAL_FINALISTS_PER_CELL
+        value: 4
+      - key: RESEARCH_CAUSAL_REGISTRY_RETEST_LIMIT
+        value: 16
       - key: CENTRAL_SUPABASE_URL
         sync: false
       - key: CENTRAL_SUPABASE_SERVICE_KEY
@@ -144,7 +160,7 @@ services:
       - key: RESEARCH_ENGINE
         value: validation
       - key: RESEARCH_AUTO_INTERVAL_MINUTES
-        value: 240
+        value: 180
       - key: RESEARCH_BOOT_DELAY_SECONDS
         value: 420
       - key: RESEARCH_MEMORY_HARD_MB
@@ -155,10 +171,14 @@ services:
         value: 390
       - key: RESEARCH_CAUSAL_CACHE_MB
         value: 240
+      - key: RESEARCH_CAUSAL_FINALISTS_PER_CELL
+        value: 4
+      - key: RESEARCH_CAUSAL_REGISTRY_RETEST_LIMIT
+        value: 16
       - key: RESEARCH_CAUSAL_VALIDATION_RESCUE
         value: 1
       - key: RESEARCH_CAUSAL_VALIDATION_RESCUE_MAX_CELLS
-        value: 18
+        value: 12
       - key: CENTRAL_SUPABASE_URL
         sync: false
       - key: CENTRAL_SUPABASE_SERVICE_KEY
