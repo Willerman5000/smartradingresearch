@@ -6,7 +6,7 @@ ROOT=Path(__file__).resolve().parent
 def test_version_and_matrix_contract():
     cfg=(ROOT/'config.py').read_text(encoding='utf-8')
     cov=(ROOT/'coverage_optimizer.py').read_text(encoding='utf-8')
-    assert 'RFV1_7_SYMBOL_TF_PROFITABILITY_LOOP_20260913' in cfg
+    assert 'RFV1_8_RELEASE_CANDIDATE_OOS_GUARD_20260913' in cfg
     assert 'CAUSAL_REQUIRED_CELLS = 54' in cfg
     assert 'def all_coverage_cells' in cov
     tree=ast.parse(cov)

@@ -84,6 +84,8 @@ def analyze_findings(rows: List[Dict[str,Any]]) -> List[Dict[str,Any]]:
         is_ai_proposal = experiment == "AI_STRATEGY_PROPOSAL"
         is_factory_strategy = experiment == "FACTORY_STRATEGY" or bool(row_meta.get("factory_strategy"))
         is_causal = experiment == "CAUSAL_COVERAGE_STRATEGY" or bool(row_meta.get("causal_candle_replay"))
+        causal_finalist_rank = int(row_meta.get("finalist_rank_selection_only") or 1)
+        causal_oos_promotable = (not is_causal) or causal_finalist_rank == 1
         strict_generated = bool(is_ai_proposal or is_factory_strategy or is_causal)
         cross_ok, cross_meta = _causal_cross_asset_ok(row, metrics, scope) if is_causal else (True,{"required":False})
 
@@ -97,7 +99,7 @@ def analyze_findings(rows: List[Dict[str,Any]]) -> List[Dict[str,Any]]:
             if vn>=min_vn and vexp is not None and vexp<=-0.15:
                 stage="REJECTED_OOS"
                 reason="Replay causal: OOS final negativo; puede degradar/vetar la hipótesis, no promover."
-            elif n>=min_n and vn>=min_vn and vexp is not None and vexp>min_exp and vpf is not None and vpf>min_pf and not pf_degenerate and stable and net_pct>=90 and runtime_trackable and cross_ok:
+            elif n>=min_n and vn>=min_vn and vexp is not None and vexp>min_exp and vpf is not None and vpf>min_pf and not pf_degenerate and stable and net_pct>=90 and runtime_trackable and cross_ok and causal_oos_promotable:
                 strong = n >= int(min_n*1.8) and vn >= int(min_vn*1.5) and vexp > max(0.18,min_exp+0.05) and vpf > max(1.25,min_pf+0.08) and positive_ratio is not None and positive_ratio >= 0.80
                 stage="SHADOW_READY_FAST" if strong else "SHADOW_READY"
                 reason=("Replay causal rentable en Discovery/selección y OOS final, walk-forward estable, costes modelados y contrato runtime reproducible. "
@@ -113,6 +115,7 @@ def analyze_findings(rows: List[Dict[str,Any]]) -> List[Dict[str,Any]]:
                 if not runtime_trackable: missing.append("paridad runtime")
                 if not cross_ok: missing.append("robustez cross-asset")
                 if pf_degenerate: missing.append("PF degenerado")
+                if not causal_oos_promotable: missing.append("finalista backup; requiere nueva generación OOS")
                 reason="Replay causal ejecutado; falta robustez: " + ", ".join(missing or ["expectancy/PF OOS"]) + "."
             else:
                 stage="OBSERVE"
@@ -170,6 +173,9 @@ def analyze_findings(rows: List[Dict[str,Any]]) -> List[Dict[str,Any]]:
             "symbol_timeframe_specialist": bool(is_causal and str(scope.get("symbol") or "ALL").upper() not in {"", "ALL"}),
             "finalist_rank_selection_only": row_meta.get("finalist_rank_selection_only"),
             "finalists_predeclared_for_oos": row_meta.get("finalists_predeclared_for_oos"),
+            "oos_promotable_selection_winner": bool(causal_oos_promotable),
+            "final_oos_locked": bool(row_meta.get("final_oos_locked", is_causal)),
+            "oos_generation_rule": row_meta.get("oos_generation_rule"),
         })
         promotions.append({
             "candidate_key":str(row.get("feature_key") or "")[:500],

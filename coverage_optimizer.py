@@ -327,6 +327,25 @@ def optimize_cell(cell: Tuple[str, str, str, str], owner_engine: str | None = No
     return optimize_cell_candidates(cell, owner_engine=owner_engine)[0]
 
 
+def _bar_signature_value(bar):
+    if isinstance(bar, dict):
+        return (
+            bar.get("timestamp") or bar.get("time") or bar.get("datetime") or bar.get("date"),
+            bar.get("open"), bar.get("high"), bar.get("low"), bar.get("close"), bar.get("volume"),
+        )
+    return tuple(getattr(bar, k, None) for k in ("timestamp","time","open","high","low","close","volume"))
+
+
+def _causal_dataset_signature(data: Dict[str, Sequence[Any]]) -> str:
+    payload=[]
+    for symbol, bars in sorted((data or {}).items()):
+        seq=list(bars or [])
+        tail=[_bar_signature_value(x) for x in seq[-3:]]
+        payload.append((symbol, len(seq), tail))
+    raw=json.dumps(payload, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(raw.encode()).hexdigest()[:24]
+
+
 def _finding(cell, spec, metrics, exec_stats, status, started, data, candidates_tested=0, owner_engine=None, finalist_rank=1, finalists_tested=1):
     system_type, family, symbol, tf = cell
     if spec is None:
@@ -370,6 +389,10 @@ def _finding(cell, spec, metrics, exec_stats, status, started, data, candidates_
             "candidates_tested": int(candidates_tested),
             "source_series": len(data),
             "source_bars": sum(len(x) for x in data.values()),
+            "causal_dataset_signature": _causal_dataset_signature(data),
+            "final_oos_locked": True,
+            "final_oos_reused_for_selection": False,
+            "oos_generation_rule": "NEW_DATA_REQUIRED_FOR_RETEST",
             "elapsed_seconds": round(time.time() - started, 2),
             "cache": cache_stats(),
             "rss_mb": round(rss_mb(), 2),
@@ -434,6 +457,13 @@ def retest_registry_promotions(rows: List[Dict[str, Any]], engine: str, on_findi
         data = _load_cell(cell)
         if not data:
             continue
+        current_signature = _causal_dataset_signature(data)
+        previous_signature = str(meta.get("causal_dataset_signature") or "")
+        if previous_signature and previous_signature == current_signature:
+            # Same historical exam = no new statistical information. Live
+            # divergence remains recorded, but we wait for new candles before
+            # retesting the same incumbent.
+            continue
         started = time.time()
         metrics, exec_stats = _evaluate(data, cell[0], spec)
         recycle_priority = int(meta.get("shadow_recycle_priority") or 0)
@@ -463,11 +493,13 @@ def retest_registry_promotions(rows: List[Dict[str, Any]], engine: str, on_findi
     return out
 
 
-def analyze_coverage_for_engine(engine: str, on_finding=None) -> List[Dict[str, Any]]:
+def analyze_coverage_for_engine(engine: str, on_finding=None, priority_cell_ids=None) -> List[Dict[str, Any]]:
     if not bool(getattr(config, "CAUSAL_ENABLED", True)):
         return []
     owner = str(engine or "").lower()
     cells = list(LANES.get(owner, []))
+    priority = {str(x) for x in (priority_cell_ids or [])}
+    cells.sort(key=lambda c: (0 if coverage_cell_id(c) in priority else 1, coverage_cell_id(c)))
     out: List[Dict[str, Any]] = []
     for cell in cells:
         if rss_mb() >= getattr(config, "MEMORY_HARD_MB", 430):

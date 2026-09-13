@@ -355,6 +355,7 @@ def _markdown_report(items):
             f'- Celdas con Selection positiva: {selection_positive}',
             f'- Celdas con OOS final positivo: {oos_positive}',
             f'- Celdas SHADOW_READY: {shadow_ready}',
+            f'- Celdas pendientes de especialista validado: {max(0, required-shadow_ready)}',
             f'- Cobertura investigada completa: {"SI" if len(causal)>=required else "NO"}',
             '> Objetivo: al menos un especialista rentable validado por cada celda. Si una celda no demuestra edge, permanece SEARCHING/VALIDATION y vuelve al ciclo; nunca se fuerza un resultado.',
             '> Discovery 60% → Selection Holdout 20% → Final OOS 20%. Final OOS no se usa para elegir finalistas.',
@@ -508,6 +509,33 @@ def _causal_retest_promotions_for_engine(engine: str):
         return []
 
 
+def _priority_cells_for_engine(engine: str):
+    """Put uncovered/unvalidated cells first when RAM/time is scarce."""
+    try:
+        rows=central.select('research_promotions_v1', params={
+            'select':'source_engine,stage,meta,research_version,updated_at',
+            'source_engine':f'eq.{engine}',
+            'research_version':f'eq.{config.VERSION}',
+            'order':'updated_at.desc','limit':'300',
+        })
+    except Exception:
+        return set()
+    seen=set(); priority=set()
+    for row in rows or []:
+        meta=row.get('meta') or {}; cid=str(meta.get('coverage_cell_id') or '')
+        if not cid or cid in seen or meta.get('is_current') is False:
+            continue
+        seen.add(cid)
+        if str(row.get('stage') or '').upper() not in {'SHADOW_READY','SHADOW_READY_FAST'}:
+            priority.add(cid)
+    # Cells with no promotion row are naturally missing from seen and are
+    # prioritized too.
+    for cell in all_coverage_cells():
+        if owner_for_cell(cell)==str(engine).lower() and coverage_cell_id(cell) not in seen:
+            priority.add(coverage_cell_id(cell))
+    return priority
+
+
 def _run_job(days: int, max_rows: int):
     run_id = str(uuid.uuid4())
     with _job_lock:
@@ -540,7 +568,11 @@ def _run_job(days: int, max_rows: int):
                 causal_findings=[]
                 def _publish_causal(finding):
                     current_keys.update(_upsert_findings([finding], run_id, fingerprint))
-                causal_findings = analyze_coverage_for_engine(config.ENGINE, on_finding=_publish_causal)
+                causal_findings = analyze_coverage_for_engine(
+                    config.ENGINE,
+                    on_finding=_publish_causal,
+                    priority_cell_ids=_priority_cells_for_engine(config.ENGINE),
+                )
                 _state['last_causal_cells'] = len({
                     str((x.get('meta') or {}).get('coverage_cell_id') or '')
                     for x in causal_findings if (x.get('meta') or {}).get('coverage_cell_id')
