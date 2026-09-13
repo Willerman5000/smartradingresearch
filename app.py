@@ -14,7 +14,9 @@ import config
 from db import RestDB, since_iso, utc_now
 from engines import ENGINES
 from engines.base import rss_mb, balanced_current_rows, source_coverage
-from coverage_optimizer import analyze_coverage_for_engine
+from coverage_optimizer import (
+    analyze_coverage_for_engine, all_coverage_cells, owner_for_cell, coverage_cell_id, optimize_cell, retest_registry_promotions
+)
 from exchange_flow import current_exchange_flow_finding
 from historical_market import cache_stats as causal_cache_stats
 
@@ -191,7 +193,8 @@ def _heartbeat(**extra):
         print(f'⚠️ heartbeat persistence: {exc}', flush=True)
 
 
-def _persist_findings(findings, run_id: str, dataset_fingerprint: str):
+def _upsert_findings(findings, run_id: str, dataset_fingerprint: str):
+    """Persist a batch without invalidating sibling findings. Returns current keys."""
     rows=[]
     current_keys=set()
     for item in findings or []:
@@ -212,14 +215,17 @@ def _persist_findings(findings, run_id: str, dataset_fingerprint: str):
         })
     if rows:
         central.upsert('research_findings_v1', rows, on_conflict='feature_key')
+    return current_keys
 
-    # Invalidate findings from previous runs of this same engine. Validation
-    # must never promote a candidate that vanished from the latest evidence.
+
+def _mark_stale_findings(current_keys, run_id: str, engine: str | None = None):
+    engine = str(engine or config.ENGINE)
     try:
         previous=central.select('research_findings_v1', params={
             'select':'feature_key,meta,research_version',
-            'engine':f'eq.{config.ENGINE}',
-            'limit':'500',
+            'engine':f'eq.{engine}',
+            'research_version':f'eq.{config.VERSION}',
+            'limit':'800',
         })
         for old in previous:
             key=str(old.get('feature_key') or '')
@@ -231,6 +237,11 @@ def _persist_findings(findings, run_id: str, dataset_fingerprint: str):
     except Exception as exc:
         print(f'⚠️ stale findings: {exc}', flush=True)
 
+
+def _persist_findings(findings, run_id: str, dataset_fingerprint: str):
+    keys=_upsert_findings(findings, run_id, dataset_fingerprint)
+    _mark_stale_findings(keys, run_id)
+    return keys
 
 
 
@@ -254,6 +265,14 @@ def _dashboard_rows():
             'limit': str(fetch_limit),
         })
     current = [r for r in raw if (r.get('meta') or {}).get('is_current') is True and str(r.get('stage') or '') != 'STALE']
+    if config.ENGINE == 'validation':
+        # Commit I.1: the 18 causal cells are contract rows, not optional top-N
+        # decoration. Always keep them visible, then fill the remaining slots.
+        causal=[r for r in current if str(r.get('experiment') or '') == 'CAUSAL_COVERAGE_STRATEGY']
+        rest=[r for r in current if str(r.get('experiment') or '') != 'CAUSAL_COVERAGE_STRATEGY']
+        causal.sort(key=lambda r: str(((r.get('meta') or {}).get('coverage_cell_id') or '')))
+        remaining=max(0, limit-len(causal))
+        return causal[:limit] + balanced_current_rows(rest, remaining)
     return balanced_current_rows(current, limit)
 
 
@@ -289,10 +308,11 @@ def _markdown_report(items):
     causal=[x for x in items if str(x.get('experiment') or '')=='CAUSAL_COVERAGE_STRATEGY']
     if causal:
         filled=sum(1 for x in causal if str((x.get('meta') or {}).get('coverage_status') or '')=='SIMULATED_PROFITABLE')
-        lines += ['## Commit I · Cobertura de rentabilidad causal', f'- Celdas causales visibles: {len(causal)}', f'- Rentables simuladas antes de Validation: {filled}', '> Discovery 60% → Selection Holdout 20% → Final OOS 20%. El OOS final nunca se usa para elegir la estrategia.', '']
-        for it in sorted(causal, key=lambda x: str((x.get('scope') or {}).get('timeframe') or '')):
-            meta=it.get('meta') or {}; cell=meta.get('coverage_cell') or {}; val=(it.get('metrics') or {}).get('validation') or {}; allm=(it.get('metrics') or {}).get('all') or {}
-            lines.append(f"- {meta.get('coverage_status')} | {cell.get('market_family')} {cell.get('symbol')} {cell.get('timeframe')} | {meta.get('causal_strategy_family')} | N={allm.get('resolved')} | OOS.N={val.get('resolved')} | OOS.Exp.R={val.get('expectancy_r')} | OOS.PF={val.get('profit_factor')}")
+        required=int(getattr(config,'CAUSAL_REQUIRED_CELLS',18))
+        lines += ['## Commit I.1 · Cobertura de rentabilidad causal', f'- Celdas causales visibles: {len(causal)}/{required}', f'- Rentables simuladas antes de Validation: {filled}', f'- Cobertura completa: {"SI" if len(causal)>=required else "NO"}', '> Discovery 60% → Selection Holdout 20% → Final OOS 20%. El OOS final nunca se usa para elegir la estrategia.', '']
+        for it in sorted(causal, key=lambda x: str((x.get('meta') or {}).get('coverage_cell_id') or '')):
+            meta=it.get('meta') or {}; cell=meta.get('coverage_cell') or {}
+            lines.append(f"- {it.get('stage')} | {cell.get('market_family')} {cell.get('symbol')} {cell.get('timeframe')} | {meta.get('causal_strategy_family')} | N={it.get('resolved')} | OOS.N={it.get('validation_n')} | OOS.Exp.R={it.get('validation_expectancy_r')} | OOS.PF={it.get('validation_profit_factor')}")
         lines.append('')
     ordered=sorted(items, key=lambda x: ((x.get('validation_expectancy_r') is not None), x.get('validation_expectancy_r') or -999, x.get('validation_n') or 0), reverse=True)
     lines.append('## Evidencia principal')
@@ -305,7 +325,56 @@ def _markdown_report(items):
     return '\n'.join(lines)
 
 
+def _current_causal_cell_ids():
+    try:
+        rows=central.paged_select('research_findings_v1', params={
+            'select':'feature_key,engine,experiment,meta,research_version,stage,updated_at',
+            'research_version':f'eq.{config.VERSION}',
+            'experiment':'eq.CAUSAL_COVERAGE_STRATEGY',
+            'order':'updated_at.desc',
+        }, max_rows=200, page_size=100)
+    except Exception:
+        return set()
+    out=set()
+    for row in rows or []:
+        meta=row.get('meta') or {}
+        if meta.get('is_current') is False or str(row.get('stage') or '') == 'STALE':
+            continue
+        cid=str(meta.get('coverage_cell_id') or '')
+        if cid:
+            out.add(cid)
+    return out
+
+
+def _rescue_missing_causal_cells(run_id: str):
+    """Validation is the fifth research instance: fill only missing matrix cells.
+
+    Normal ownership remains execution/risk/strategy/traders. This rescue makes
+    the 18/18 contract converge even when a free Render worker cold-starts or a
+    long historical download misses the first Validation window.
+    """
+    if not bool(getattr(config,'CAUSAL_VALIDATION_RESCUE',True)):
+        return 0
+    present=_current_causal_cell_ids()
+    missing=[cell for cell in all_coverage_cells() if coverage_cell_id(cell) not in present]
+    cap=int(getattr(config,'CAUSAL_VALIDATION_RESCUE_MAX_CELLS',18))
+    missing=missing[:cap]
+    if not missing:
+        return 0
+    print(f'🧯 [I.1 VALIDATION] rescate causal faltantes={len(missing)} presentes={len(present)}/18', flush=True)
+    done=0
+    for cell in missing:
+        if rss_mb() >= getattr(config,'MEMORY_HARD_MB',430):
+            break
+        owner=owner_for_cell(cell)
+        finding=optimize_cell(cell, owner_engine=owner)
+        _upsert_findings([finding], run_id, f'validation-rescue:{coverage_cell_id(cell)}')
+        done += 1
+    return done
+
+
 def _run_validation(run_id: str):
+    _rescue_missing_causal_cells(run_id)
     raw = central.paged_select('research_findings_v1', params={
         'select':'engine,experiment,feature_key,scope,stage,metrics,meta,research_version,updated_at',
         'research_version':f'eq.{config.VERSION}',
@@ -338,6 +407,21 @@ def _run_validation(run_id: str):
     return len(rows), len(promotions)
 
 
+def _causal_retest_promotions_for_engine(engine: str):
+    try:
+        return central.select('research_promotions_v1', params={
+            'select':'candidate_key,source_engine,experiment,stage,scope,metrics,meta,research_version,updated_at',
+            'source_engine':f'eq.{engine}',
+            'experiment':'eq.CAUSAL_COVERAGE_STRATEGY',
+            'stage':'in.(SHADOW_READY,SHADOW_READY_FAST,VALIDATION_REQUIRED,REJECTED_OOS)',
+            'order':'updated_at.desc',
+            'limit':str(int(getattr(config,'CAUSAL_REGISTRY_RETEST_LIMIT',8))*2),
+        })
+    except Exception as exc:
+        print(f'⚠️ [I.1 RETEST] source: {exc}', flush=True)
+        return []
+
+
 def _run_job(days: int, max_rows: int):
     run_id = str(uuid.uuid4())
     with _job_lock:
@@ -363,26 +447,34 @@ def _run_job(days: int, max_rows: int):
                 else:
                     findings = _engine.analyze(rows)
 
-                # Commit I: every analytical Render owns distinct causal cells,
-                # using its own RAM instead of concentrating backtesting in one service.
-                causal_findings = analyze_coverage_for_engine(config.ENGINE)
+                # I.1 publishes observational evidence immediately, then every
+                # causal cell as soon as it finishes. A slow 5m replay can no
+                # longer hide already-completed sibling cells from Validation.
+                current_keys=set(_upsert_findings(findings, run_id, fingerprint))
+                causal_findings=[]
+                def _publish_causal(finding):
+                    current_keys.update(_upsert_findings([finding], run_id, fingerprint))
+                causal_findings = analyze_coverage_for_engine(config.ENGINE, on_finding=_publish_causal)
                 _state['last_causal_cells'] = len(causal_findings)
                 _state['last_causal_profitable'] = sum(
                     1 for x in causal_findings
                     if str((x.get('meta') or {}).get('coverage_status') or '') == 'SIMULATED_PROFITABLE'
                 )
-                findings.extend(causal_findings)
 
-                # Current CEX reserve/flow context belongs to Strategy Research,
-                # never to promotion by itself. It is fail-open and optional.
+                # Rebacktest strategies already in Shadow/Validation on the newest
+                # historical window. This is separate from live Shadow evidence.
+                retest_source=_causal_retest_promotions_for_engine(config.ENGINE)
+                retest_findings=retest_registry_promotions(retest_source, config.ENGINE, on_finding=_publish_causal)
+
                 if config.ENGINE == 'strategy':
                     flow = current_exchange_flow_finding()
                     if flow:
                         findings.append(flow)
+                        current_keys.update(_upsert_findings([flow], run_id, fingerprint))
 
-                finding_count = len(findings)
-                _persist_findings(findings, run_id, fingerprint)
-                del rows, findings, causal_findings
+                finding_count = len(findings) + len(causal_findings) + len(retest_findings)
+                _mark_stale_findings(current_keys, run_id, engine=config.ENGINE)
+                del rows, findings, causal_findings, retest_findings
             try:
                 central.rpc('cleanup_research_federation_v1', {})
             except Exception:

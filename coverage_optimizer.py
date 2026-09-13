@@ -9,6 +9,7 @@ Goal: actively research every market×timeframe cell instead of letting one hot
 import hashlib
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 import config
@@ -35,6 +36,25 @@ LANES = {
         *[("spot", "PAXG_BTC", "PAXG-BTC", tf) for tf in ("4H", "12H", "1D", "1W")],
     ],
 }
+
+
+def all_coverage_cells() -> List[Tuple[str, str, str, str]]:
+    """Canonical 18-cell matrix used by every engine and Validation rescue."""
+    out: List[Tuple[str, str, str, str]] = []
+    for owner in ("execution", "risk", "strategy", "traders"):
+        out.extend(LANES.get(owner, []))
+    return out
+
+
+def owner_for_cell(cell: Tuple[str, str, str, str]) -> str:
+    for owner, cells in LANES.items():
+        if cell in cells:
+            return owner
+    return "strategy"
+
+
+def coverage_cell_id(cell: Tuple[str, str, str, str]) -> str:
+    return "|".join(str(x).upper() for x in cell)
 
 
 def _bars_for(tf: str) -> int:
@@ -110,18 +130,34 @@ def _scope(cell: Tuple[str, str, str, str], spec: StrategySpec) -> Dict[str, str
 def _load_cell(cell: Tuple[str, str, str, str]) -> Dict[str, Sequence[Any]]:
     system_type, _family, symbol, tf = cell
     bars = _bars_for(tf)
-    symbols = FUTURES_SYMBOLS if system_type == "futures" else (symbol,)
-    data = {}
-    for sym in symbols:
+    symbols = list(FUTURES_SYMBOLS if system_type == "futures" else (symbol,))
+    data: Dict[str, Sequence[Any]] = {}
+
+    def one(sym: str):
         try:
-            candles = fetch_market(system_type, sym, tf, bars)
+            return sym, fetch_market(system_type, sym, tf, bars), None
         except Exception as exc:
-            print(f"⚠️ [I CAUSAL] {sym} {tf}: {str(exc)[:140]}", flush=True)
-            candles = []
+            return sym, [], exc
+
+    # Historical downloads are I/O bound. Three workers use the research
+    # instance efficiently without creating a request storm or large frames.
+    workers = min(len(symbols), int(getattr(config, "CAUSAL_FETCH_WORKERS", 3)))
+    if workers <= 1:
+        results = [one(sym) for sym in symbols]
+    else:
+        results = []
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="causal-fetch") as pool:
+            future_map = {pool.submit(one, sym): sym for sym in symbols}
+            for fut in as_completed(future_map):
+                results.append(fut.result())
+
+    for sym, candles, exc in results:
+        if exc is not None:
+            print(f"⚠️ [I.1 CAUSAL] {sym} {tf}: {str(exc)[:140]}", flush=True)
         if len(candles) >= 120:
             data[sym] = candles
         if rss_mb() >= getattr(config, "CAUSAL_MEMORY_TARGET_MB", 390):
-            print(f"🧠 [I CAUSAL] memory target reached {rss_mb():.1f}MB; stop loading more symbols", flush=True)
+            print(f"🧠 [I.1 CAUSAL] memory target {rss_mb():.1f}MB; loaded={len(data)}", flush=True)
             break
     return data
 
@@ -157,12 +193,12 @@ def _is_simulated_profitable(metrics: Dict[str, Any]) -> bool:
     return int(h.get("resolved") or 0) >= 3 and (h.get("expectancy_r") is not None and h.get("expectancy_r") > 0) and (h.get("profit_factor") is None or h.get("profit_factor") > 1.05)
 
 
-def optimize_cell(cell: Tuple[str, str, str, str]) -> Dict[str, Any]:
+def optimize_cell(cell: Tuple[str, str, str, str], owner_engine: str | None = None) -> Dict[str, Any]:
     started = time.time()
     system_type, family, symbol, tf = cell
     data = _load_cell(cell)
     if not data:
-        return _finding(cell, None, {}, {}, "NO_HISTORY", started, data)
+        return _finding(cell, None, {}, {}, "NO_HISTORY", started, data, owner_engine=owner_engine)
 
     coarse = []
     for spec in _coarse_specs(tf):
@@ -191,10 +227,10 @@ def optimize_cell(cell: Tuple[str, str, str, str]) -> Dict[str, Any]:
     best = refined[0] if refined else (None, None, {}, {})
     _score, spec, metrics, exec_stats = best
     status = "SIMULATED_PROFITABLE" if spec and _is_simulated_profitable(metrics) else "NO_EDGE_FOUND"
-    return _finding(cell, spec, metrics, exec_stats, status, started, data, candidates_tested=len(refined))
+    return _finding(cell, spec, metrics, exec_stats, status, started, data, candidates_tested=len(refined), owner_engine=owner_engine)
 
 
-def _finding(cell, spec, metrics, exec_stats, status, started, data, candidates_tested=0):
+def _finding(cell, spec, metrics, exec_stats, status, started, data, candidates_tested=0, owner_engine=None):
     system_type, family, symbol, tf = cell
     if spec is None:
         spec = StrategySpec("NONE", "BOTH", max_hold=_hold_bars(tf), max_wait=_wait_bars(tf))
@@ -202,10 +238,11 @@ def _finding(cell, spec, metrics, exec_stats, status, started, data, candidates_
     contract = runtime_contract(scope)
     robustness = _robustness(metrics, system_type) if metrics else {"symbols_tested": len(data), "positive_symbols": 0, "positive_symbol_ratio": 0.0, "cross_asset_required": system_type == "futures"}
     strategy_id = _strategy_id(cell, spec)
+    source_engine = str(owner_engine or config.ENGINE).lower()
     return {
-        "engine": config.ENGINE,
+        "engine": source_engine,
         "experiment": EXPERIMENT,
-        "feature_key": f"{config.ENGINE}:{EXPERIMENT}:{family}:{symbol}:{tf}:{strategy_id}"[:500],
+        "feature_key": f"{source_engine}:{EXPERIMENT}:{family}:{symbol}:{tf}:{strategy_id}"[:500],
         "scope": scope,
         "stage": status,
         "authority": "RESEARCH_ONLY",
@@ -214,6 +251,8 @@ def _finding(cell, spec, metrics, exec_stats, status, started, data, candidates_
             "is_causal_coverage": True,
             "causal_candle_replay": True,
             "coverage_cell": {"system_type": system_type, "market_family": family, "symbol": symbol, "timeframe": tf},
+            "coverage_cell_id": coverage_cell_id(cell),
+            "coverage_owner_engine": source_engine,
             "coverage_status": status,
             "causal_strategy_id": strategy_id,
             "causal_strategy_family": spec.family,
@@ -245,15 +284,74 @@ def _finding(cell, spec, metrics, exec_stats, status, started, data, candidates_
     }
 
 
-def analyze_coverage_for_engine(engine: str) -> List[Dict[str, Any]]:
+def _spec_from_meta(meta: Dict[str, Any]) -> StrategySpec | None:
+    raw=(meta or {}).get("causal_strategy_spec") or {}
+    if not isinstance(raw, dict) or not raw.get("family"):
+        return None
+    allowed=set(StrategySpec.__dataclass_fields__.keys())
+    kwargs={k:v for k,v in raw.items() if k in allowed}
+    try:
+        return StrategySpec(**kwargs)
+    except Exception:
+        return None
+
+
+def retest_registry_promotions(rows: List[Dict[str, Any]], engine: str, on_finding=None) -> List[Dict[str, Any]]:
+    """Rebacktest current Shadow/Validation causal incumbents on fresh history."""
+    owner=str(engine or "").lower()
+    out=[]; seen=set()
+    cap=int(getattr(config,"CAUSAL_REGISTRY_RETEST_LIMIT",8))
+    for row in rows or []:
+        if len(out)>=cap:
+            break
+        if str(row.get("source_engine") or "").lower()!=owner:
+            continue
+        meta=row.get("meta") or {}
+        cell_raw=meta.get("coverage_cell") or {}
+        cell=(str(cell_raw.get("system_type") or "").lower(), str(cell_raw.get("market_family") or ""), str(cell_raw.get("symbol") or "ALL").upper(), str(cell_raw.get("timeframe") or "").upper())
+        if cell not in LANES.get(owner,[]):
+            continue
+        spec=_spec_from_meta(meta)
+        if spec is None:
+            continue
+        dedupe=(coverage_cell_id(cell),spec.key())
+        if dedupe in seen:
+            continue
+        seen.add(dedupe)
+        data=_load_cell(cell)
+        if not data:
+            continue
+        started=time.time()
+        metrics,exec_stats=_evaluate(data,cell[0],spec)
+        finding=_finding(cell,spec,metrics,exec_stats,"REGISTRY_RETEST",started,data,candidates_tested=1,owner_engine=owner)
+        finding["experiment"]="CAUSAL_REGISTRY_RETEST"
+        original=str(row.get("candidate_key") or "")
+        finding["feature_key"]=(f"{owner}:CAUSAL_REGISTRY_RETEST:{original}" if original else finding["feature_key"]+":RETEST")[:500]
+        fmeta=dict(finding.get("meta") or {})
+        fmeta.update({"registry_retest":True,"original_candidate_key":original,"original_stage":row.get("stage"),"coverage_status":"RETESTED"})
+        finding["meta"]=fmeta
+        out.append(finding)
+        if callable(on_finding):
+            on_finding(finding)
+    return out
+
+
+def analyze_coverage_for_engine(engine: str, on_finding=None) -> List[Dict[str, Any]]:
     if not bool(getattr(config, "CAUSAL_ENABLED", True)):
         return []
-    cells = list(LANES.get(str(engine or "").lower(), []))
-    out = []
+    owner = str(engine or "").lower()
+    cells = list(LANES.get(owner, []))
+    out: List[Dict[str, Any]] = []
     for cell in cells:
         if rss_mb() >= getattr(config, "MEMORY_HARD_MB", 430):
-            print(f"🧠 [I CAUSAL] hard memory gate at {rss_mb():.1f}MB", flush=True)
+            print(f"🧠 [I.1 CAUSAL] hard memory gate at {rss_mb():.1f}MB", flush=True)
             break
-        print(f"🧪 [I CAUSAL] {engine} -> {cell[1]} {cell[2]} {cell[3]}", flush=True)
-        out.append(optimize_cell(cell))
+        print(f"🧪 [I.1 CAUSAL] {owner} -> {cell[1]} {cell[2]} {cell[3]}", flush=True)
+        finding = optimize_cell(cell, owner_engine=owner)
+        out.append(finding)
+        if callable(on_finding):
+            try:
+                on_finding(finding)
+            except Exception as exc:
+                print(f"⚠️ [I.1 CAUSAL] incremental persistence: {exc}", flush=True)
     return out

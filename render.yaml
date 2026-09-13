@@ -146,11 +146,19 @@ services:
       - key: RESEARCH_AUTO_INTERVAL_MINUTES
         value: 240
       - key: RESEARCH_BOOT_DELAY_SECONDS
-        value: 240
+        value: 420
       - key: RESEARCH_MEMORY_HARD_MB
-        value: 380
+        value: 430
       - key: RESEARCH_CAUSAL_ENABLED
-        value: 0
+        value: 1
+      - key: RESEARCH_CAUSAL_MEMORY_TARGET_MB
+        value: 390
+      - key: RESEARCH_CAUSAL_CACHE_MB
+        value: 240
+      - key: RESEARCH_CAUSAL_VALIDATION_RESCUE
+        value: 1
+      - key: RESEARCH_CAUSAL_VALIDATION_RESCUE_MAX_CELLS
+        value: 18
       - key: CENTRAL_SUPABASE_URL
         sync: false
       - key: CENTRAL_SUPABASE_SERVICE_KEY
