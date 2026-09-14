@@ -74,6 +74,12 @@ class Trade:
     guardian_delta_r: float | None = None
     guardian_exit_reason: str | None = None
     guardian_interventions: int = 0
+    # RC4 execution-integrity diagnostics. They are descriptive only and are
+    # never used to choose the finalist seen by Final OOS.
+    direct_stop: bool = False
+    wick_stop: bool = False
+    reclaimed_after_sl: bool = False
+    tp_after_sl: bool = False
 
 
 def _ema(values: Sequence[float], period: int) -> List[float]:
@@ -498,6 +504,32 @@ def replay_series(symbol: str, system_type: str, candles: Sequence[Candle], spec
             float(guardian_r_net) - float(net_r)
             if guardian_r_net is not None else None
         )
+
+        # RC4 Wick/SL audit: keep the real conservative SL result, but continue
+        # observing the original plan causally to learn whether the stop was a
+        # wick/reclaim or whether TP would have occurred later. No PnL is
+        # rewritten from this counterfactual diagnostic.
+        direct_stop = bool(reason == "SL" and mfe < 0.25)
+        wick_stop = False
+        reclaimed_after_sl = False
+        tp_after_sl = False
+        if reason == "SL":
+            sl_bar = candles[exit_idx]
+            wick_stop = bool(
+                (direction == "LONG" and sl_bar.low <= stop and sl_bar.close > stop)
+                or (direction == "SHORT" and sl_bar.high >= stop and sl_bar.close < stop)
+            )
+            audit_end = min(n, entry_idx + max(1, spec.max_hold) + 1)
+            for q in range(exit_idx + 1, audit_end):
+                bq = candles[q]
+                if direction == "LONG":
+                    reclaimed_after_sl = reclaimed_after_sl or (bq.close >= entry)
+                    tp_after_sl = tp_after_sl or (bq.high >= target)
+                else:
+                    reclaimed_after_sl = reclaimed_after_sl or (bq.close <= entry)
+                    tp_after_sl = tp_after_sl or (bq.low <= target)
+                if tp_after_sl:
+                    break
         trades.append(Trade(
             symbol, direction, candles[i].ts, candles[entry_idx].ts, candles[exit_idx].ts,
             entry, stop, target, net_r, mfe, mae, held, reason,
@@ -505,6 +537,8 @@ def replay_series(symbol: str, system_type: str, candles: Sequence[Candle], spec
             guardian_delta_r=guardian_delta_r,
             guardian_exit_reason=operational.get("reason"),
             guardian_interventions=int(operational.get("interventions") or 0),
+            direct_stop=direct_stop, wick_stop=wick_stop,
+            reclaimed_after_sl=reclaimed_after_sl, tp_after_sl=tp_after_sl,
         ))
         i = max(i + 1, exit_idx + 1)
     return trades, {"signals": signals, "activated": activated}
@@ -537,6 +571,22 @@ def summarize_trades(trades: Sequence[Trade]) -> Dict[str, Any]:
     guardian_delta = [float(t.guardian_delta_r) for t in trades if t.guardian_delta_r is not None]
     gpos = sum(x for x in guardian_rs if x > 0); gneg = abs(sum(x for x in guardian_rs if x < 0))
     gpf = gpos / gneg if gneg > 1e-12 else None
+    sl_trades = [t for t in trades if t.exit_reason == "SL"]
+    entry_execution_audit = {
+        "authority": "RESEARCH_ONLY",
+        "n_resolved": len(trades),
+        "sl_count": len(sl_trades),
+        "direct_stop_count": sum(1 for t in sl_trades if t.direct_stop),
+        "direct_stop_pct": round(sum(1 for t in sl_trades if t.direct_stop) / len(sl_trades) * 100.0, 2) if sl_trades else None,
+        "wick_stop_count": sum(1 for t in sl_trades if t.wick_stop),
+        "wick_stop_pct": round(sum(1 for t in sl_trades if t.wick_stop) / len(sl_trades) * 100.0, 2) if sl_trades else None,
+        "reclaimed_after_sl_count": sum(1 for t in sl_trades if t.reclaimed_after_sl),
+        "tp_after_sl_count": sum(1 for t in sl_trades if t.tp_after_sl),
+        "avg_mfe_r": round(sum(t.mfe_r for t in trades) / len(trades), 4) if trades else None,
+        "avg_mae_r": round(sum(t.mae_r for t in trades) / len(trades), 4) if trades else None,
+        "diagnostic_only": True,
+    }
+
     guardian_overlay = {
         "authority": "RESEARCH_ONLY",
         "selection_uses_overlay": False,
@@ -565,6 +615,7 @@ def summarize_trades(trades: Sequence[Trade]) -> Dict[str, Any]:
         "net_evidence_count": len(trades), "net_evidence_pct": 100.0 if trades else 0.0,
         "cost_model": "MODELED_FEES_SLIPPAGE_AND_FUNDING_STRESS",
         "guardian_operational_replay": guardian_overlay,
+        "entry_execution_audit": entry_execution_audit,
     }
 
 

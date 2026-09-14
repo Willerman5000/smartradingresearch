@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-"""FINAL V1 RC2 — Active Symbol×Timeframe Profitability Coverage.
+"""FINAL V1 RC4 — Active Symbol×Timeframe Profitability Coverage.
 
 Research target:
-- Futures: 7 symbols × 4 TF = 28 specialist cells.
+- Futures core: 7 symbols × (30M,1H,2H,4H) = 28 specialist cells.
+- Futures swing context: BTC/ETH/SOL × (12H,1D) = 6 specialist cells.
 - Spot: BTC-USDT, PAXG-USDT, PAXG-BTC × 4 TF = 12 cells.
-- Total contract = 40 cells.
+- Total contract = 46 cells.
 
 5m/15m were retired from V1 after the final audit: they were not part of the
 operator's intended workflow and consumed disproportionate refresh/backtest
@@ -26,6 +27,7 @@ from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 import config
 from causal_backtest import StrategySpec, replay_series, selection_score, temporal_metrics
+from full_stack_certification import build_full_stack_certification
 from db import utc_now
 from engines.base import runtime_contract, rss_mb
 from historical_market import fetch_market, cache_stats
@@ -33,19 +35,24 @@ from historical_market import fetch_market, cache_stats
 EXPERIMENT = "CAUSAL_COVERAGE_STRATEGY"
 FUTURES_SYMBOLS = ("BTC-USDT", "ETH-USDT", "SOL-USDT", "XRP-USDT", "ADA-USDT", "LINK-USDT", "BNB-USDT")
 SPOT_SYMBOLS = ("BTC-USDT", "PAXG-USDT", "PAXG-BTC")
-FUTURES_TFS = ("30M", "1H", "2H", "4H")
+FUTURES_CORE_TFS = ("30M", "1H", "2H", "4H")
+FUTURES_HIGH_TFS = ("12H", "1D")
+FUTURES_HIGH_TF_SYMBOLS = ("BTC-USDT", "ETH-USDT", "SOL-USDT")
+FUTURES_TFS = FUTURES_CORE_TFS + FUTURES_HIGH_TFS
 SPOT_TFS = ("4H", "12H", "1D", "1W")
 
 
-def _future_cells(tfs: Sequence[str]) -> List[Tuple[str, str, str, str]]:
-    return [("futures", "CRYPTO_FUTURES", symbol, tf) for tf in tfs for symbol in FUTURES_SYMBOLS]
+def _future_cells(tfs: Sequence[str], symbols: Sequence[str] = FUTURES_SYMBOLS) -> List[Tuple[str, str, str, str]]:
+    return [("futures", "CRYPTO_FUTURES", symbol, tf) for tf in tfs for symbol in symbols]
 
 
-# Balanced use of the four research workers. Validation is aggregation + rescue.
+# RC4 balances the four workers while adding only six high-TF cells.
+# 12H/1D are also useful as context for lower-TF production decisions, but each
+# remains its own independently validated profitability cell.
 LANES = {
-    "execution": _future_cells(("30M",)),                    # 7
-    "risk": _future_cells(("1H",)),                         # 7
-    "strategy": _future_cells(("2H", "4H")),               # 14
+    "execution": [*_future_cells(("30M",)), *_future_cells(("12H",), FUTURES_HIGH_TF_SYMBOLS)],  # 10
+    "risk": [*_future_cells(("1H",)), *_future_cells(("1D",), FUTURES_HIGH_TF_SYMBOLS)],          # 10
+    "strategy": _future_cells(("2H", "4H")),                                                    # 14
     "traders": [
         *[("spot", "CRYPTO_SPOT", "BTC-USDT", tf) for tf in SPOT_TFS],
         *[("spot", "PAXG_USDT", "PAXG-USDT", tf) for tf in SPOT_TFS],
@@ -151,11 +158,15 @@ def _coarse_specs(tf: str) -> List[StrategySpec]:
     return specs
 
 
-def _refine(seed: StrategySpec) -> Iterable[StrategySpec]:
+def _refine(seed: StrategySpec, tf: str = "") -> Iterable[StrategySpec]:
     # Bounded geometry refinement. Still uses only Discovery + Selection score.
-    for entry_style, entry_atr in (("NEXT_OPEN", 0.0), ("PULLBACK", 0.18), ("PULLBACK", 0.30), ("PULLBACK", 0.42)):
-        for sl in (0.9, 1.15, 1.4, 1.7, 2.0):
-            for rr in (1.35, 1.6, 2.0, 2.5, 3.0):
+    high_tf = str(tf).upper() in {"12H", "1D", "1W"}
+    entry_grid = (("NEXT_OPEN", 0.0), ("PULLBACK", 0.18), ("PULLBACK", 0.30), ("PULLBACK", 0.42), ("PULLBACK", 0.60)) if high_tf else (("NEXT_OPEN", 0.0), ("PULLBACK", 0.18), ("PULLBACK", 0.30), ("PULLBACK", 0.42))
+    sl_grid = (1.2, 1.5, 1.8, 2.1, 2.4) if high_tf else (0.9, 1.15, 1.4, 1.7, 2.0)
+    rr_grid = (1.75, 2.25, 2.75, 3.25, 4.0) if high_tf else (1.35, 1.6, 2.0, 2.5, 3.0)
+    for entry_style, entry_atr in entry_grid:
+        for sl in sl_grid:
+            for rr in rr_grid:
                 yield StrategySpec(
                     seed.family, seed.direction_mode, fast=seed.fast, slow=seed.slow,
                     rsi_len=seed.rsi_len, rsi_low=seed.rsi_low, rsi_high=seed.rsi_high,
@@ -299,7 +310,7 @@ def optimize_cell_candidates(cell: Tuple[str, str, str, str], owner_engine: str 
     seen = {x[1].key() for x in refined}
     max_refined = max(16, int(getattr(config, "CAUSAL_MAX_REFINED_PER_CELL", 84)))
     for _, seed, _, _ in seeds:
-        for spec in _refine(seed):
+        for spec in _refine(seed, tf):
             if spec.key() in seen:
                 continue
             seen.add(spec.key())
@@ -393,6 +404,16 @@ def _finding(cell, spec, metrics, exec_stats, status, started, data, candidates_
                 or {}
             ),
             "guardian_operational_replay_selection_authority": False,
+            # RC4: a single read-only certificate joins strategy edge, entry
+            # execution, costs and Guardian overlay for THIS cell only. It is
+            # never used for candidate ranking and never grants production
+            # authority by itself.
+            "full_stack_profitability_certification": build_full_stack_certification(
+                system_type=system_type, symbol=symbol, timeframe=tf,
+                strategy_family=spec.family, strategy_spec=spec.__dict__,
+                metrics=metrics or {}, execution_stats=exec_stats or {},
+            ),
+            "full_stack_certification_selection_authority": False,
             "runtime_contract": contract,
             "runtime_trackable": bool(contract.get("runtime_trackable")),
             "historical_feature_proxy": True,

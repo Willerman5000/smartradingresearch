@@ -350,7 +350,7 @@ def _markdown_report(items):
         oos_positive=sum(1 for x in causal if x.get('validation_expectancy_r') is not None and float(x.get('validation_expectancy_r') or 0)>0 and (x.get('validation_profit_factor') is None or float(x.get('validation_profit_factor') or 0)>1.0))
         shadow_ready=sum(1 for x in causal if str(x.get('stage') or '') in {'SHADOW_READY','SHADOW_READY_FAST'})
         lines += [
-            '## FINAL V1 RC2 · Cobertura especialista de rentabilidad',
+            '## FINAL V1 RC4 · Cobertura especialista de rentabilidad',
             f'- Celdas símbolo×temporalidad visibles: {len(causal)}/{required}',
             f'- Celdas con Selection positiva: {selection_positive}',
             f'- Celdas con OOS final positivo: {oos_positive}',
