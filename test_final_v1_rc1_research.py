@@ -11,7 +11,7 @@ def test_release_candidate_oos_integrity_contract():
     cfg = txt('config.py')
     cov = txt('coverage_optimizer.py')
     val = txt('engines/validation.py')
-    assert 'RFV1_8_RELEASE_CANDIDATE_OOS_GUARD_20260913' in cfg
+    assert 'RFV1_9_RELEASE_CANDIDATE_40CELL_20260914' in cfg
     assert 'causal_dataset_signature' in cov
     assert 'final_oos_locked' in cov
     assert 'NEW_DATA_REQUIRED_FOR_RETEST' in cov

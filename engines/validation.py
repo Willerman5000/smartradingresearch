@@ -9,7 +9,7 @@ ENGINE="validation"
 
 def _targets(scope, fast=False):
     tf=str((scope or {}).get("timeframe") or "").upper()
-    normal={"5M":15,"15M":15,"30M":15,"1H":12,"2H":12,"4H":10,"12H":8,"1D":6,"1W":3}.get(tf,15)
+    normal={"30M":15,"1H":12,"2H":12,"4H":10,"12H":8,"1D":6,"1W":3}.get(tf,12)
     if fast:
         normal=max(2,round(normal*0.65))
     canary=max(2,round(normal*0.50))
@@ -20,7 +20,7 @@ def _causal_thresholds(scope: Dict[str, Any]) -> Tuple[int, int, float, float]:
     """Discovery/OOS thresholds scale with timeframe instead of one N for all."""
     tf=str((scope or {}).get("timeframe") or "").upper()
     table={
-        "5M":(60,20,0.10,1.15), "15M":(50,15,0.10,1.15), "30M":(40,12,0.10,1.15),
+        "30M":(40,12,0.10,1.15),
         "1H":(30,10,0.10,1.15), "2H":(25,8,0.10,1.15), "4H":(20,6,0.10,1.15),
         "12H":(15,5,0.08,1.12), "1D":(12,4,0.08,1.12), "1W":(8,3,0.05,1.10),
     }

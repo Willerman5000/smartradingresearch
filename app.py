@@ -45,14 +45,14 @@ def _auth_ok() -> bool:
 def _source_rows(days: int, max_rows: int):
     """Read a bounded but timeframe-balanced source window.
 
-    A single newest-first global LIMIT is dominated by 5m/15m/30m Futures and
+    A single newest-first global LIMIT can be dominated by intraday Futures and
     can starve the strategic 4h/12h/1D/1W Spot evidence.  We reserve part of
     the same max_rows budget for those strategic Spot lanes, then sample every
     supported timeframe, and finally fill any unused capacity with the newest
     rows globally.  Total rows never exceeds max_rows.
     """
     strategic_spot = ("4h", "12h", "1D", "1W")
-    all_timeframes = ("5m", "15m", "30m", "1h", "2h", "4h", "12h", "1D", "1W")
+    all_timeframes = ("30m", "1h", "2h", "4h", "12h", "1D", "1W")
     selected = {}
 
     def add_rows(rows):
@@ -350,7 +350,7 @@ def _markdown_report(items):
         oos_positive=sum(1 for x in causal if x.get('validation_expectancy_r') is not None and float(x.get('validation_expectancy_r') or 0)>0 and (x.get('validation_profit_factor') is None or float(x.get('validation_profit_factor') or 0)>1.0))
         shadow_ready=sum(1 for x in causal if str(x.get('stage') or '') in {'SHADOW_READY','SHADOW_READY_FAST'})
         lines += [
-            '## Commit I.2 · Cobertura especialista de rentabilidad',
+            '## FINAL V1 RC2 · Cobertura especialista de rentabilidad',
             f'- Celdas símbolo×temporalidad visibles: {len(causal)}/{required}',
             f'- Celdas con Selection positiva: {selection_positive}',
             f'- Celdas con OOS final positivo: {oos_positive}',

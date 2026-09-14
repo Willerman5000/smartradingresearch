@@ -1,11 +1,16 @@
 from __future__ import annotations
 
-"""Commit I.2 — Symbol×Timeframe Profitability Coverage Accelerator.
+"""FINAL V1 RC2 — Active Symbol×Timeframe Profitability Coverage.
 
 Research target:
-- Futures: 7 symbols × 6 TF = 42 specialist cells.
+- Futures: 7 symbols × 4 TF = 28 specialist cells.
 - Spot: BTC-USDT, PAXG-USDT, PAXG-BTC × 4 TF = 12 cells.
-- Total contract = 54 cells.
+- Total contract = 40 cells.
+
+5m/15m were retired from V1 after the final audit: they were not part of the
+operator's intended workflow and consumed disproportionate refresh/backtest
+capacity. Historical rows remain preserved but are not part of the active V1
+contract.
 
 The engine does NOT force a profitable result. It keeps each cell in the
 iterative research loop until a pre-declared finalist survives untouched Final
@@ -28,7 +33,7 @@ from historical_market import fetch_market, cache_stats
 EXPERIMENT = "CAUSAL_COVERAGE_STRATEGY"
 FUTURES_SYMBOLS = ("BTC-USDT", "ETH-USDT", "SOL-USDT", "XRP-USDT", "ADA-USDT", "LINK-USDT", "BNB-USDT")
 SPOT_SYMBOLS = ("BTC-USDT", "PAXG-USDT", "PAXG-BTC")
-FUTURES_TFS = ("5M", "15M", "30M", "1H", "2H", "4H")
+FUTURES_TFS = ("30M", "1H", "2H", "4H")
 SPOT_TFS = ("4H", "12H", "1D", "1W")
 
 
@@ -38,9 +43,9 @@ def _future_cells(tfs: Sequence[str]) -> List[Tuple[str, str, str, str]]:
 
 # Balanced use of the four research workers. Validation is aggregation + rescue.
 LANES = {
-    "execution": _future_cells(("5M", "15M")),          # 14
-    "risk": _future_cells(("30M", "1H")),              # 14
-    "strategy": _future_cells(("2H", "4H")),           # 14
+    "execution": _future_cells(("30M",)),                    # 7
+    "risk": _future_cells(("1H",)),                         # 7
+    "strategy": _future_cells(("2H", "4H")),               # 14
     "traders": [
         *[("spot", "CRYPTO_SPOT", "BTC-USDT", tf) for tf in SPOT_TFS],
         *[("spot", "PAXG_USDT", "PAXG-USDT", tf) for tf in SPOT_TFS],
@@ -68,17 +73,17 @@ def coverage_cell_id(cell: Tuple[str, str, str, str]) -> str:
 
 
 def _bars_for(tf: str) -> int:
-    defaults = {"5M": 11000, "15M": 9500, "30M": 8000, "1H": 7000, "2H": 5500, "4H": 4500, "12H": 2800, "1D": 1900, "1W": 650}
+    defaults = {"30M": 8000, "1H": 7000, "2H": 5500, "4H": 4500, "12H": 2800, "1D": 1900, "1W": 650}
     hard = int(getattr(config, "CAUSAL_MAX_BARS", 12000))
     return min(hard, defaults.get(tf, 4500))
 
 
 def _hold_bars(tf: str) -> int:
-    return {"5M": 36, "15M": 28, "30M": 24, "1H": 18, "2H": 14, "4H": 10, "12H": 8, "1D": 6, "1W": 4}.get(tf, 18)
+    return {"30M": 24, "1H": 18, "2H": 14, "4H": 10, "12H": 8, "1D": 6, "1W": 4}.get(tf, 18)
 
 
 def _wait_bars(tf: str) -> int:
-    return {"5M": 4, "15M": 4, "30M": 3, "1H": 3, "2H": 3, "4H": 2, "12H": 2, "1D": 2, "1W": 1}.get(tf, 3)
+    return {"30M": 3, "1H": 3, "2H": 3, "4H": 2, "12H": 2, "1D": 2, "1W": 1}.get(tf, 3)
 
 
 def _coarse_specs(tf: str) -> List[StrategySpec]:
