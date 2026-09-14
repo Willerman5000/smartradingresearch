@@ -1,0 +1,13 @@
+FINAL V1 RC4.1 RESEARCH
+========================
+Commit físico esperado: 1
+Repo: smartradingresearch
+
+Archivos modificados/nuevos:
+- app.py
+- config.py
+- historical_market.py
+- tests/test_final_v1_rc4_1.py
+- INSTRUCCIONES_RC4_1_RESEARCH.md
+
+No requiere migración SQL ni variables de entorno nuevas.

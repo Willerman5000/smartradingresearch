@@ -254,6 +254,29 @@ def _stage_priority(stage):
     }.get(str(stage or '').upper(), 20)
 
 
+def _row_in_active_contract(row):
+    """RC4.1: UI/report filter only; legacy findings remain persisted."""
+    scope = (row or {}).get('scope') or {}
+    meta = (row or {}).get('meta') or {}
+    cell = meta.get('coverage_cell') or {}
+    market = str(scope.get('market_family') or cell.get('market_family') or '').upper()
+    symbol = str(scope.get('symbol') or cell.get('symbol') or '').upper().replace('/', '-')
+    tf = str(scope.get('timeframe') or cell.get('timeframe') or '').upper()
+    if not tf:
+        # Non-cell evidence without TF is kept visible; it is not a retired TF.
+        return True
+    if market == 'CRYPTO_FUTURES':
+        if tf in {'30M','1H','2H','4H'}:
+            return symbol in {'BTC-USDT','ETH-USDT','SOL-USDT','XRP-USDT','ADA-USDT','LINK-USDT','BNB-USDT'} or not symbol
+        if tf in {'12H','1D'}:
+            return symbol in {'BTC-USDT','ETH-USDT','SOL-USDT'}
+        return False
+    if market in {'CRYPTO_SPOT','PAXG_BTC','PAXG_USDT'}:
+        return tf in {'4H','12H','1D','1W'}
+    # Generic research evidence: explicitly retire old fast TFs from default report.
+    return tf not in {'5M','15M'}
+
+
 def _best_causal_per_cell(rows):
     """One representative per symbol×TF cell for coverage/UI only.
 
@@ -306,7 +329,7 @@ def _dashboard_rows():
         # while keeping all pre-declared finalists persisted for Validation.
         causal_all=[r for r in current if str(r.get('experiment') or '') in {'CAUSAL_COVERAGE_STRATEGY','CAUSAL_REGISTRY_RETEST','CAUSAL_SHADOW_RECYCLE'}]
         causal=_best_causal_per_cell(causal_all)
-        rest=[r for r in current if r not in causal_all]
+        rest=[r for r in current if r not in causal_all and _row_in_active_contract(r)]
         causal.sort(key=lambda r: str(((r.get('meta') or {}).get('coverage_cell_id') or '')))
         remaining=max(0, limit-len(causal))
         return causal[:limit] + balanced_current_rows(rest, remaining)
@@ -350,7 +373,7 @@ def _markdown_report(items):
         oos_positive=sum(1 for x in causal if x.get('validation_expectancy_r') is not None and float(x.get('validation_expectancy_r') or 0)>0 and (x.get('validation_profit_factor') is None or float(x.get('validation_profit_factor') or 0)>1.0))
         shadow_ready=sum(1 for x in causal if str(x.get('stage') or '') in {'SHADOW_READY','SHADOW_READY_FAST'})
         lines += [
-            '## FINAL V1 RC4 · Cobertura especialista de rentabilidad',
+            f'## {getattr(config, "RELEASE_LABEL", "FINAL V1 RC4")} · Cobertura especialista de rentabilidad',
             f'- Celdas símbolo×temporalidad visibles: {len(causal)}/{required}',
             f'- Celdas con Selection positiva: {selection_positive}',
             f'- Celdas con OOS final positivo: {oos_positive}',
@@ -365,9 +388,13 @@ def _markdown_report(items):
             meta=it.get('meta') or {}; cell=meta.get('coverage_cell') or {}
             lines.append(f"- {it.get('stage')} | {cell.get('market_family')} {cell.get('symbol')} {cell.get('timeframe')} | {meta.get('causal_strategy_family')} | N={it.get('resolved')} | OOS.N={it.get('validation_n')} | OOS.Exp.R={it.get('validation_expectancy_r')} | OOS.PF={it.get('validation_profit_factor')}")
         lines.append('')
-    ordered=sorted(items, key=lambda x: ((x.get('validation_expectancy_r') is not None), x.get('validation_expectancy_r') or -999, x.get('validation_n') or 0), reverse=True)
+    active_items=[x for x in items if _row_in_active_contract(x)]
+    legacy_hidden=max(0, len(items)-len(active_items))
+    ordered=sorted(active_items, key=lambda x: ((x.get('validation_expectancy_r') is not None), x.get('validation_expectancy_r') or -999, x.get('validation_n') or 0), reverse=True)
     lines.append('## Evidencia principal')
     lines.append('> Filas CAUSAL_COVERAGE_STRATEGY son replay causal. Las demás conservan atribución observacional con holdout temporal.')
+    if legacy_hidden:
+        lines.append(f'> Evidencia Legacy fuera del contrato activo omitida de esta vista: {legacy_hidden} filas. Se conserva en Supabase/Research.')
     for it in ordered[:25]:
         scope=', '.join(f'{k}={v}' for k,v in (it.get('scope') or {}).items())
         lines.append(f"- {it.get('stage')} | {it.get('experiment')} | {scope} | N={it.get('resolved')} | OOS/Holdout.N={it.get('validation_n')} | Exp.R={it.get('expectancy_r')} | OOS/Holdout.Exp.R={it.get('validation_expectancy_r')} | PF={it.get('validation_profit_factor')}")
