@@ -417,6 +417,8 @@ def _finding(cell, spec, metrics, exec_stats, status, started, data, candidates_
             "runtime_contract": contract,
             "runtime_trackable": bool(contract.get("runtime_trackable")),
             "historical_feature_proxy": True,
+            "production_parity": False,
+            "production_parity_reason": "Historical causal/proxy replay; real production committee and Entry/SL/TP require Shadow/LIVE confirmation.",
             "live_shadow_confirms_runtime_parity": True,
             "cross_asset": robustness,
             "signals_seen": int((exec_stats or {}).get("signals") or 0),
@@ -528,12 +530,15 @@ def retest_registry_promotions(rows: List[Dict[str, Any]], engine: str, on_findi
     return out
 
 
-def analyze_coverage_for_engine(engine: str, on_finding=None, priority_cell_ids=None) -> List[Dict[str, Any]]:
+def analyze_coverage_for_engine(engine: str, on_finding=None, priority_cell_ids=None, only_cell_ids=None) -> List[Dict[str, Any]]:
     if not bool(getattr(config, "CAUSAL_ENABLED", True)):
         return []
     owner = str(engine or "").lower()
     cells = list(LANES.get(owner, []))
     priority = {str(x) for x in (priority_cell_ids or [])}
+    only = {str(x) for x in (only_cell_ids or [])}
+    if only:
+        cells = [c for c in cells if coverage_cell_id(c) in only]
     cells.sort(key=lambda c: (0 if coverage_cell_id(c) in priority else 1, coverage_cell_id(c)))
     out: List[Dict[str, Any]] = []
     for cell in cells:

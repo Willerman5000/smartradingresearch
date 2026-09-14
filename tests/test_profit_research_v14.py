@@ -65,7 +65,7 @@ def test_ai_proposal_becomes_research_finding_and_keeps_runtime_contract():
 
 
 def test_strategy_component_meta_does_not_destroy_runtime_contract():
-    rows = [_row(i) for i in range(8)]
+    rows = [_row(i) for i in range(10)]
     findings = strategy.analyze(rows)
     component = next(x for x in findings if x['experiment'] == 'COMPONENT_ATTRIBUTION')
     assert 'runtime_contract' in component['meta']
@@ -73,7 +73,7 @@ def test_strategy_component_meta_does_not_destroy_runtime_contract():
 
 
 def test_trader_meta_does_not_destroy_runtime_contract():
-    rows = [_row(i) for i in range(8)]
+    rows = [_row(i) for i in range(10)]
     findings = traders.analyze(rows)
     item = findings[0]
     assert 'runtime_contract' in item['meta']

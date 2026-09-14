@@ -110,8 +110,12 @@ def market_family(row: Dict[str, Any]) -> str:
 
 
 def scoped_symbol(row: Dict[str, Any]) -> str:
-    family = market_family(row)
+    """Return the real symbol for learning/attribution.
+
+    Final V1 never grants positive authority from pooled crypto evidence.
+    Global aggregates may still be built explicitly for diagnostics, but the
+    default research key is market × symbol × timeframe so ETH cannot lend
+    reputation/edge to XRP and Spot cannot lend it to Futures.
+    """
     symbol = str(row.get("symbol") or "UNKNOWN").upper().replace("/", "-")
-    # PAXG no se mezcla con cripto Spot. Futures comparte edge global y
-    # sólo abre una dimensión por símbolo separada para comprobar excepciones.
-    return symbol if family in {"PAXG_USDT", "PAXG_BTC"} else "ALL_CRYPTO"
+    return symbol or "UNKNOWN"

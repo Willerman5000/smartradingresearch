@@ -9,7 +9,7 @@ costs -> Guardian -> runtime committee/live parity.
 """
 from typing import Any, Dict
 
-VERSION = "RC4_FULL_STACK_CERT_V1"
+VERSION = "FINAL_V1_FULL_STACK_CERT_V2"
 
 
 def _num(value, default=None):
@@ -41,9 +41,9 @@ def build_full_stack_certification(*, system_type: str, symbol: str, timeframe: 
     # strategy replay must never fabricate the 10-trader decision.
     committee_state = "RUNTIME_ATTRIBUTION_REQUIRED"
     if strategy_positive and entry_observed:
-        state = "OPERATIONAL_BACKTEST_POSITIVE_PENDING_LIVE_COMMITTEE"
+        state = "HISTORICAL_BACKTEST_POSITIVE_PENDING_REAL_EXECUTION"
     elif strategy_positive:
-        state = "EDGE_POSITIVE_ENTRY_EVIDENCE_INCOMPLETE"
+        state = "HISTORICAL_EDGE_POSITIVE_ENTRY_EVIDENCE_INCOMPLETE"
     else:
         state = "NOT_CERTIFIED"
 
@@ -67,6 +67,8 @@ def build_full_stack_certification(*, system_type: str, symbol: str, timeframe: 
         "guardian": {"delta_expectancy_r": guardian_delta, "replay": guardian},
         "committee": {"state": committee_state, "historical_direction_fabricated": False},
         "certification_state": state,
+        "production_parity": False,
+        "production_parity_reason": "Research uses causal/proxy geometry; Shadow/LIVE must confirm the real committee and production Entry/SL/TP.",
         "production_authority": False,
         "guarantees_future_profit": False,
     }

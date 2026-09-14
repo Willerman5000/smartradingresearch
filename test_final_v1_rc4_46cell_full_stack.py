@@ -35,6 +35,7 @@ def test_full_stack_certificate_never_grants_production_authority():
     cert = build_full_stack_certification(system_type='futures',symbol='BTC-USDT',timeframe='4H',
         strategy_family='BREAKOUT_RETEST', strategy_spec={'entry_style':'PULLBACK','entry_atr':0.3,'sl_atr':1.4,'rr':2.5},
         metrics=metrics, execution_stats={'signals':20,'activated':14})
-    assert cert['certification_state'].startswith('OPERATIONAL_BACKTEST_POSITIVE')
+    assert cert['certification_state'].startswith('HISTORICAL_BACKTEST_POSITIVE')
+    assert cert['production_parity'] is False
     assert cert['production_authority'] is False
     assert cert['committee']['state'] == 'RUNTIME_ATTRIBUTION_REQUIRED'

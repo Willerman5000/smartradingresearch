@@ -32,6 +32,9 @@ _state = {
     'last_error': None, 'last_run_id': None, 'last_source_rows': 0,
     'last_findings': 0, 'last_rss_mb': 0.0, 'last_source_coverage': {},
     'last_ai_proposals': 0, 'last_causal_cells': 0, 'last_causal_profitable': 0,
+    'bootstrap_pending': None, 'bootstrap_mode': 'UNKNOWN',
+    'bootstrap_prev_pending': None, 'bootstrap_stall_cycles': 0,
+    'next_auto_interval_minutes': None,
 }
 
 
@@ -40,6 +43,27 @@ def _auth_ok() -> bool:
         return True
     supplied = request.headers.get('X-Research-Token') or request.args.get('token') or ''
     return supplied == config.RUN_TOKEN
+
+
+def _source_row_in_active_contract(row) -> bool:
+    """Final V1 learning contract for observational evidence.
+
+    Historical 5m/15m and retired Spot timeframes remain stored in Supabase but
+    do not create new Strategy Factory / trader / execution evidence.
+    """
+    system_type = str((row or {}).get("system_type") or "").lower()
+    symbol = str((row or {}).get("symbol") or "").upper().replace("/", "-")
+    tf = str((row or {}).get("timeframe") or "").upper()
+    if system_type == "futures":
+        core = {"BTC-USDT","ETH-USDT","SOL-USDT","XRP-USDT","ADA-USDT","LINK-USDT","BNB-USDT"}
+        if tf in {"30M","1H","2H","4H"}:
+            return symbol in core
+        if tf in {"12H","1D"}:
+            return symbol in {"BTC-USDT","ETH-USDT","SOL-USDT"}
+        return False
+    if system_type == "spot":
+        return symbol in {"BTC-USDT","PAXG-USDT","PAXG-BTC"} and tf in {"4H","12H","1D","1W"}
+    return False
 
 
 def _source_rows(days: int, max_rows: int):
@@ -98,7 +122,7 @@ def _source_rows(days: int, max_rows: int):
     if remaining > 0:
         add_rows(lane(remaining))
 
-    rows = list(selected.values())
+    rows = [r for r in selected.values() if _source_row_in_active_contract(r)]
     rows.sort(key=lambda r: (str(r.get('created_at') or ''), str(r.get('id') or '')))
     return rows
 
@@ -281,7 +305,7 @@ def _best_causal_per_cell(rows):
     """One representative per symbol×TF cell for coverage/UI only.
 
     All finalists remain persisted and available to Validation; this helper
-    prevents 4 finalists from making a 54-cell matrix look like 216 cells.
+    prevents 4 finalists from making a 46-cell matrix look like 216 cells.
     """
     best={}
     for row in rows or []:
@@ -325,7 +349,7 @@ def _dashboard_rows():
         })
     current = [r for r in raw if (r.get('meta') or {}).get('is_current') is True and str(r.get('stage') or '') != 'STALE']
     if config.ENGINE == 'validation':
-        # I.2: show one representative for each of the 54 symbol×TF cells,
+        # I.2: show one representative for each of the 46 symbol×TF cells,
         # while keeping all pre-declared finalists persisted for Validation.
         causal_all=[r for r in current if str(r.get('experiment') or '') in {'CAUSAL_COVERAGE_STRATEGY','CAUSAL_REGISTRY_RETEST','CAUSAL_SHADOW_RECYCLE'}]
         causal=_best_causal_per_cell(causal_all)
@@ -368,7 +392,7 @@ def _markdown_report(items):
     causal_all=[x for x in items if str(x.get('experiment') or '') in {'CAUSAL_COVERAGE_STRATEGY','CAUSAL_REGISTRY_RETEST','CAUSAL_SHADOW_RECYCLE'}]
     causal=_best_causal_per_cell(causal_all)
     if causal:
-        required=int(getattr(config,'CAUSAL_REQUIRED_CELLS',54))
+        required=int(getattr(config,'CAUSAL_REQUIRED_CELLS',46))
         selection_positive=sum(1 for x in causal if str((x.get('meta') or {}).get('coverage_status') or '')=='SELECTION_PROFITABLE')
         oos_positive=sum(1 for x in causal if x.get('validation_expectancy_r') is not None and float(x.get('validation_expectancy_r') or 0)>0 and (x.get('validation_profit_factor') is None or float(x.get('validation_profit_factor') or 0)>1.0))
         shadow_ready=sum(1 for x in causal if str(x.get('stage') or '') in {'SHADOW_READY','SHADOW_READY_FAST'})
@@ -425,7 +449,7 @@ def _current_causal_cell_ids():
 
 
 def _rescue_missing_causal_cells(run_id: str):
-    """Validation is the fifth research instance: fill missing 54-cell specialists.
+    """Validation is the fifth research instance: fill missing 46-cell specialists.
 
     Owners remain execution/risk/strategy/traders. Rescue computes only missing
     symbol×TF cells and persists all pre-declared finalists.
@@ -438,7 +462,7 @@ def _rescue_missing_causal_cells(run_id: str):
     missing=missing[:cap]
     if not missing:
         return 0
-    print(f'🧯 [I.2 VALIDATION] rescate causal faltantes={len(missing)} presentes={len(present)}/{getattr(config, "CAUSAL_REQUIRED_CELLS", 54)}', flush=True)
+    print(f'🧯 [I.2 VALIDATION] rescate causal faltantes={len(missing)} presentes={len(present)}/{getattr(config, "CAUSAL_REQUIRED_CELLS", 46)}', flush=True)
     done=0
     for cell in missing:
         if rss_mb() >= getattr(config,'MEMORY_HARD_MB',430):
@@ -563,6 +587,82 @@ def _priority_cells_for_engine(engine: str):
     return priority
 
 
+def _bootstrap_status(engine: str | None = None):
+    """Return active cells still lacking a usable untouched Final OOS sample.
+
+    A cell is considered *populated*, not profitable, once it has a current
+    causal finding with at least one Final OOS result. Negative OOS is still a
+    valid populated cell and remains in the normal iterative research loop.
+    """
+    owner = str(engine or config.ENGINE).lower()
+    expected = [c for c in all_coverage_cells() if owner == "validation" or owner_for_cell(c) == owner]
+    expected_ids = {coverage_cell_id(c) for c in expected}
+    if not expected_ids:
+        return {"expected": 0, "complete": 0, "pending_ids": set()}
+    try:
+        rows = central.paged_select('research_findings_v1', params={
+            'select':'engine,experiment,stage,metrics,meta,research_version,updated_at',
+            'research_version':f'eq.{config.VERSION}',
+            'experiment':'eq.CAUSAL_COVERAGE_STRATEGY',
+            'order':'updated_at.desc',
+        }, max_rows=1600, page_size=300)
+    except Exception as exc:
+        print(f'⚠️ bootstrap status: {exc}', flush=True)
+        return {"expected": len(expected_ids), "complete": 0, "pending_ids": expected_ids, "read_error": True}
+    complete=set()
+    for row in rows or []:
+        meta=row.get('meta') or {}
+        if meta.get('is_current') is False or str(row.get('stage') or '').upper() == 'STALE':
+            continue
+        cid=str(meta.get('coverage_cell_id') or '')
+        if cid not in expected_ids:
+            continue
+        metrics=row.get('metrics') or {}
+        val=metrics.get('validation') or {}
+        try:
+            oos_n=int(val.get('resolved') or 0)
+        except Exception:
+            oos_n=0
+        if oos_n > 0:
+            complete.add(cid)
+    pending=expected_ids-complete
+    return {"expected": len(expected_ids), "complete": len(complete), "pending_ids": pending}
+
+
+def _bootstrap_interval_minutes():
+    if not bool(getattr(config, 'BOOTSTRAP_ACCELERATED', True)):
+        return int(config.AUTO_INTERVAL_MINUTES), set(), 'NORMAL'
+    status=_bootstrap_status(config.ENGINE)
+    pending=set(status.get('pending_ids') or set())
+    count=len(pending)
+    _state['bootstrap_pending']=count
+    if count <= 0:
+        _state['bootstrap_mode']='NORMAL'
+        _state['bootstrap_stall_cycles']=0
+        _state['bootstrap_prev_pending']=0
+        return int(config.AUTO_INTERVAL_MINUTES), pending, 'NORMAL'
+
+    prev=_state.get('bootstrap_prev_pending')
+    stalls=int(_state.get('bootstrap_stall_cycles') or 0)
+    if prev is not None and int(prev) == count:
+        stalls += 1
+    elif prev is not None and count < int(prev):
+        stalls = 0
+    _state['bootstrap_prev_pending']=count
+    _state['bootstrap_stall_cycles']=stalls
+
+    # Under memory pressure or after repeated no-progress cycles, back off.
+    pressure = rss_mb() >= min(float(getattr(config, 'CAUSAL_MEMORY_TARGET_MB', 390)), float(getattr(config, 'MEMORY_HARD_MB', 430)) - 20.0)
+    if pressure or stalls >= int(getattr(config, 'BOOTSTRAP_STALL_CYCLES', 3)):
+        mode='BOOTSTRAP_BACKOFF'
+        minutes=int(getattr(config, 'BOOTSTRAP_BACKOFF_MINUTES', 60))
+    else:
+        mode='BOOTSTRAP_FAST'
+        minutes=int(getattr(config, 'BOOTSTRAP_FAST_MINUTES', 30))
+    _state['bootstrap_mode']=mode
+    return minutes, pending, mode
+
+
 def _run_job(days: int, max_rows: int):
     run_id = str(uuid.uuid4())
     with _job_lock:
@@ -595,10 +695,16 @@ def _run_job(days: int, max_rows: int):
                 causal_findings=[]
                 def _publish_causal(finding):
                     current_keys.update(_upsert_findings([finding], run_id, fingerprint))
+                bootstrap = _bootstrap_status(config.ENGINE) if bool(getattr(config, 'BOOTSTRAP_ACCELERATED', True)) else {"pending_ids": set()}
+                bootstrap_pending = set(bootstrap.get('pending_ids') or set())
                 causal_findings = analyze_coverage_for_engine(
                     config.ENGINE,
                     on_finding=_publish_causal,
                     priority_cell_ids=_priority_cells_for_engine(config.ENGINE),
+                    # During initial population, spend causal compute only on
+                    # incomplete cells. Once populated, normal iterative runs
+                    # revisit the complete lane every RESEARCH_AUTO_INTERVAL.
+                    only_cell_ids=bootstrap_pending if bootstrap_pending else None,
                 )
                 _state['last_causal_cells'] = len({
                     str((x.get('meta') or {}).get('coverage_cell_id') or '')
@@ -703,7 +809,7 @@ def dashboard_api():
             'authority': 'RESEARCH_ONLY', 'rss_mb': round(rss_mb(),2),
             'running': _state['running'], 'stages': stages, 'items': items,
             'coverage': source_coverage(rows), 'causal_cache': causal_cache_stats(),
-            'last_run': {k:_state.get(k) for k in ('last_started_at','last_finished_at','last_error','last_source_rows','last_findings','last_source_coverage','last_ai_proposals','last_causal_cells','last_causal_profitable')},
+            'last_run': {k:_state.get(k) for k in ('last_started_at','last_finished_at','last_error','last_source_rows','last_findings','last_source_coverage','last_ai_proposals','last_causal_cells','last_causal_profitable','bootstrap_pending','bootstrap_mode','next_auto_interval_minutes')},
         })
     except Exception as exc:
         return jsonify({'ok':False,'engine':config.ENGINE,'error':str(exc)[:240]}), 500
@@ -719,19 +825,24 @@ def export_summary():
 
 
 def _auto_loop():
-    # Validation starts later so the four evidence engines can publish their
-    # current RF V1.3 snapshot first after a simultaneous Render deploy.
-    initial_delay = config.BOOT_DELAY_SECONDS
+    # Stagger the five Render services so bootstrap does not hit KuCoin/Supabase
+    # simultaneously. Validation starts after the evidence engines.
+    stagger = {'execution':0, 'risk':15, 'strategy':30, 'traders':45, 'validation':0}.get(config.ENGINE, 0)
+    initial_delay = int(config.BOOT_DELAY_SECONDS) + int(stagger)
     if config.ENGINE == 'validation':
-        initial_delay = max(initial_delay, 180)
+        initial_delay = max(initial_delay, int(getattr(config, 'BOOTSTRAP_VALIDATION_DELAY_SECONDS', 90)))
     time.sleep(initial_delay)
     while True:
         try:
+            minutes, pending, mode = _bootstrap_interval_minutes()
+            _state['next_auto_interval_minutes']=minutes
+            print(f'⏱️ [{config.ENGINE}] cadence={mode} every={minutes}m pending={len(pending)}', flush=True)
             if not _state['running']:
                 _start_job()
         except Exception as exc:
             print(f'⚠️ auto-loop {config.ENGINE}: {exc}', flush=True)
-        time.sleep(config.AUTO_INTERVAL_MINUTES * 60)
+            minutes = int(getattr(config, 'BOOTSTRAP_BACKOFF_MINUTES', 60))
+        time.sleep(max(30, int(minutes)) * 60)
 
 
 if config.ENGINE not in config.VALID_ENGINES:

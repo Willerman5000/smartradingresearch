@@ -14,8 +14,8 @@ class RC41ResearchTests(unittest.TestCase):
 
     def test_contract_remains_46_cells(self):
         self.assertEqual(config.CAUSAL_REQUIRED_CELLS, 46)
-        self.assertEqual(config.VERSION, 'RFV1_10_RC4_46CELL_20260914')
-        self.assertEqual(config.RELEASE_LABEL, 'FINAL V1 RC4.1')
+        self.assertEqual(config.VERSION, 'RFV1_11_FINAL_RC42_46CELL_20260914')
+        self.assertEqual(config.RELEASE_LABEL, 'FINAL V1')
 
     def test_report_source_contains_active_contract_filter(self):
         src = (ROOT / 'app.py').read_text(encoding='utf-8')

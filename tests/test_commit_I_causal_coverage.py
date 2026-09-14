@@ -35,14 +35,14 @@ def test_causal_replay_produces_net_metrics_without_lookahead():
     assert metrics['all']['net_evidence_pct'] == 100.0
 
 
-def test_commit_i2_lanes_cover_all_54_symbol_tf_cells_once():
+def test_final_v1_lanes_cover_all_46_symbol_tf_cells_once():
     cells=[cell for engine,cells in LANES.items() for cell in cells]
-    assert len(cells) == 54
-    assert len(set(cells)) == 54
+    assert len(cells) == 46
+    assert len(set(cells)) == 46
     futures=[x for x in cells if x[0]=='futures']
     spot=[x for x in cells if x[0]=='spot']
-    assert {x[3] for x in futures} == {'5M','15M','30M','1H','2H','4H'}
-    assert len(futures) == 42
+    assert {x[3] for x in futures} == {'30M','1H','2H','4H','12H','1D'}
+    assert len(futures) == 34
     assert {x[2] for x in futures} == {'BTC-USDT','ETH-USDT','SOL-USDT','XRP-USDT','ADA-USDT','LINK-USDT','BNB-USDT'}
     assert len(spot) == 12
     assert {x[2] for x in spot} == {'BTC-USDT','PAXG-USDT','PAXG-BTC'}

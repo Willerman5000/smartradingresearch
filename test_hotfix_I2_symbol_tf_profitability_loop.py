@@ -7,23 +7,25 @@ from coverage_optimizer import LANES, all_coverage_cells, coverage_cell_id
 ROOT=Path(__file__).resolve().parent
 
 
-def test_i2_contract_is_54_cells():
+def test_final_v1_contract_is_46_cells():
     cells=all_coverage_cells()
-    assert config.CAUSAL_REQUIRED_CELLS == 54
-    assert len(cells)==54
-    assert len({coverage_cell_id(x) for x in cells})==54
+    assert config.CAUSAL_REQUIRED_CELLS == 46
+    assert len(cells)==46
+    assert len({coverage_cell_id(x) for x in cells})==46
     futures=[x for x in cells if x[0]=='futures']
     spot=[x for x in cells if x[0]=='spot']
-    assert len(futures)==42
+    assert len(futures)==34
     assert len(spot)==12
 
 
 def test_each_futures_symbol_has_each_operational_tf():
     cells=all_coverage_cells()
     symbols={'BTC-USDT','ETH-USDT','SOL-USDT','XRP-USDT','ADA-USDT','LINK-USDT','BNB-USDT'}
-    tfs={'5M','15M','30M','1H','2H','4H'}
+    core_tfs={'30M','1H','2H','4H'}
     got={(c[2],c[3]) for c in cells if c[0]=='futures'}
-    assert got == {(s,tf) for s in symbols for tf in tfs}
+    expected={(s,tf) for s in symbols for tf in core_tfs}
+    expected |= {(s,tf) for s in {'BTC-USDT','ETH-USDT','SOL-USDT'} for tf in {'12H','1D'}}
+    assert got == expected
 
 
 def test_spot_contract_has_three_markets_four_tfs():
