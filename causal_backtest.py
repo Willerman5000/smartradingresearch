@@ -67,6 +67,13 @@ class Trade:
     mae_r: float
     bars_held: int
     exit_reason: str
+    # RC3 diagnostic-only operational replay. These fields NEVER participate
+    # in candidate selection; they measure whether a fixed Guardian policy
+    # would add or destroy R after the strategy geometry is already defined.
+    guardian_r_net: float | None = None
+    guardian_delta_r: float | None = None
+    guardian_exit_reason: str | None = None
+    guardian_interventions: int = 0
 
 
 def _ema(values: Sequence[float], period: int) -> List[float]:
@@ -267,6 +274,161 @@ def _cost_r(entry: float, stop: float, bars_held: int, system_type: str, seconds
     return ((bps + funding_bps * funding_blocks) / 10000.0) / risk_pct
 
 
+def _guardian_operational_replay(
+    candles: Sequence[Candle],
+    entry_idx: int,
+    direction: str,
+    entry: float,
+    original_stop: float,
+    original_target: float,
+    max_hold: int,
+    system_type: str,
+    seconds_per_bar: int,
+) -> Dict[str, Any]:
+    """Causal RC3 replay of the fixed Futures Guardian management policy.
+
+    This is DIAGNOSTIC only. It does not select candidates and therefore cannot
+    leak Final OOS into ranking. Every management decision uses only bars that
+    have already CLOSED before the next bar is evaluated.
+
+    The overlay models HOLD / PROTECT / EXTEND / structural EXIT. Scale-in and
+    partial REDUCE are deliberately counted as research opportunities but do
+    not invent fills or position sizing in historical PnL.
+    """
+    risk = abs(entry - original_stop)
+    reward = abs(original_target - entry)
+    if risk <= 0 or reward <= 0:
+        return {"r_net": None, "reason": "INVALID", "interventions": 0}
+
+    stop = float(original_stop)
+    target = float(original_target)
+    interventions = 0
+    reason = "TIMEOUT"
+    exit_idx = min(len(candles) - 1, entry_idx + max(1, int(max_hold)))
+    exit_price = float(candles[exit_idx].close)
+    post_closes: List[float] = []
+    post_highs: List[float] = []
+    post_lows: List[float] = []
+
+    for k in range(entry_idx, min(len(candles), entry_idx + max(1, int(max_hold)) + 1)):
+        bar = candles[k]
+        if direction == "LONG":
+            sl_hit = bar.low <= stop
+            tp_hit = bar.high >= target
+        else:
+            sl_hit = bar.high >= stop
+            tp_hit = bar.low <= target
+        # Same-bar ambiguity stays conservative.
+        if sl_hit:
+            exit_idx, exit_price, reason = k, stop, "GUARDIAN_SL"
+            break
+        if tp_hit:
+            exit_idx, exit_price, reason = k, target, "GUARDIAN_TP"
+            break
+
+        post_closes.append(float(bar.close))
+        post_highs.append(float(bar.high))
+        post_lows.append(float(bar.low))
+        if len(post_closes) < 2:
+            continue
+
+        close = post_closes[-1]
+        favorable = max(0.0, close - entry) if direction == "LONG" else max(0.0, entry - close)
+        progress_r = favorable / risk
+        tp_progress = favorable / reward
+
+        lookback = min(5, len(post_closes) - 1)
+        base = post_closes[-1 - lookback]
+        recent_change_pct = ((close - base) / base * 100.0) if base else 0.0
+        fast = sum(post_closes[-3:]) / min(3, len(post_closes))
+        slow_n = min(8, len(post_closes))
+        slow = sum(post_closes[-slow_n:]) / slow_n
+        momentum_with = (
+            recent_change_pct >= 0.22 and fast >= slow
+            if direction == "LONG"
+            else recent_change_pct <= -0.22 and fast <= slow
+        )
+
+        structure_bad = False
+        if len(post_closes) >= 6:
+            ref = post_closes[-6:-2]
+            if direction == "LONG":
+                level = min(ref)
+                structure_bad = post_closes[-1] < level and post_closes[-2] < level and fast < slow
+            else:
+                level = max(ref)
+                structure_bad = post_closes[-1] > level and post_closes[-2] > level and fast > slow
+        adverse_r = (
+            max(0.0, entry - close) / risk
+            if direction == "LONG"
+            else max(0.0, close - entry) / risk
+        )
+        if structure_bad and adverse_r >= 0.55:
+            exit_idx, exit_price, reason = k, close, "GUARDIAN_INVALIDATION_EXIT"
+            interventions += 1
+            break
+
+        # PROTECT for next candle only after the current candle has closed.
+        if progress_r >= 0.65 and len(post_lows) >= 2:
+            old_stop = stop
+            if direction == "LONG":
+                base_protection = entry if progress_r >= 1.0 else original_stop + risk * 0.45
+                structural = min(post_lows[-3:]) - risk * 0.10
+                candidate = max(original_stop, base_protection, structural)
+                if progress_r < 1.0:
+                    candidate = min(candidate, entry - risk * 0.06)
+                candidate = min(candidate, close - risk * 0.14)
+                if candidate > stop + risk * 0.01 and candidate < close:
+                    stop = candidate
+            else:
+                base_protection = entry if progress_r >= 1.0 else original_stop - risk * 0.45
+                structural = max(post_highs[-3:]) + risk * 0.10
+                candidate = min(original_stop, base_protection, structural)
+                if progress_r < 1.0:
+                    candidate = max(candidate, entry + risk * 0.06)
+                candidate = max(candidate, close + risk * 0.14)
+                if candidate < stop - risk * 0.01 and candidate > close:
+                    stop = candidate
+            if stop != old_stop:
+                interventions += 1
+
+        # EXTEND to the nearest PRE-EXISTING closed structural swing beyond TP.
+        # Context ends at k, so no future leakage; if a post-entry candle had
+        # already touched original TP, the intrabar block above would have exited.
+        if tp_progress >= 0.70 and momentum_with and not structure_bad:
+            context_start = max(0, entry_idx - 20)
+            context = candles[context_start:entry_idx]
+            old_target = target
+            if direction == "LONG":
+                levels = sorted({float(x.high) for x in context if float(x.high) > target})
+                if levels:
+                    candidate = levels[0]
+                    extension = candidate - target
+                    if risk * 0.15 <= extension <= risk * 1.25:
+                        target = candidate
+            else:
+                levels = sorted({float(x.low) for x in context if float(x.low) < target}, reverse=True)
+                if levels:
+                    candidate = levels[0]
+                    extension = target - candidate
+                    if risk * 0.15 <= extension <= risk * 1.25:
+                        target = candidate
+            if target != old_target:
+                interventions += 1
+
+    held = max(1, exit_idx - entry_idx + 1)
+    gross_r = ((exit_price - entry) / risk) if direction == "LONG" else ((entry - exit_price) / risk)
+    cost_r = _cost_r(entry, original_stop, held, system_type, seconds_per_bar)
+    return {
+        "r_net": gross_r - cost_r,
+        "reason": reason,
+        "interventions": interventions,
+        "exit_idx": exit_idx,
+        "stop": stop,
+        "target": target,
+    }
+
+
 def replay_series(symbol: str, system_type: str, candles: Sequence[Candle], spec: StrategySpec) -> Tuple[List[Trade], Dict[str, int]]:
     if len(candles) < max(140, spec.slow + spec.lookback + 110):
         return [], {"signals": 0, "activated": 0}
@@ -327,7 +489,23 @@ def replay_series(symbol: str, system_type: str, candles: Sequence[Candle], spec
         held = max(1, exit_idx - entry_idx + 1)
         cost_r = _cost_r(entry, stop, held, system_type, seconds_per_bar)
         net_r = gross_r - cost_r
-        trades.append(Trade(symbol, direction, candles[i].ts, candles[entry_idx].ts, candles[exit_idx].ts, entry, stop, target, net_r, mfe, mae, held, reason))
+        operational = _guardian_operational_replay(
+            candles, entry_idx, direction, entry, stop, target, spec.max_hold,
+            system_type, seconds_per_bar,
+        )
+        guardian_r_net = operational.get("r_net")
+        guardian_delta_r = (
+            float(guardian_r_net) - float(net_r)
+            if guardian_r_net is not None else None
+        )
+        trades.append(Trade(
+            symbol, direction, candles[i].ts, candles[entry_idx].ts, candles[exit_idx].ts,
+            entry, stop, target, net_r, mfe, mae, held, reason,
+            guardian_r_net=guardian_r_net,
+            guardian_delta_r=guardian_delta_r,
+            guardian_exit_reason=operational.get("reason"),
+            guardian_interventions=int(operational.get("interventions") or 0),
+        ))
         i = max(i + 1, exit_idx + 1)
     return trades, {"signals": signals, "activated": activated}
 
@@ -354,6 +532,26 @@ def summarize_trades(trades: Sequence[Trade]) -> Dict[str, Any]:
             "expectancy_r": round(sum(vals) / len(vals), 5) if vals else None,
             "wins": sum(1 for v in vals if v > 0),
         }
+
+    guardian_rs = [float(t.guardian_r_net) for t in trades if t.guardian_r_net is not None]
+    guardian_delta = [float(t.guardian_delta_r) for t in trades if t.guardian_delta_r is not None]
+    gpos = sum(x for x in guardian_rs if x > 0); gneg = abs(sum(x for x in guardian_rs if x < 0))
+    gpf = gpos / gneg if gneg > 1e-12 else None
+    guardian_overlay = {
+        "authority": "RESEARCH_ONLY",
+        "selection_uses_overlay": False,
+        "n": len(guardian_rs),
+        "expectancy_r": round(sum(guardian_rs) / len(guardian_rs), 5) if guardian_rs else None,
+        "profit_factor": round(gpf, 4) if gpf is not None else None,
+        "max_drawdown_r": round(_drawdown(guardian_rs), 4) if guardian_rs else None,
+        "delta_expectancy_r_vs_original": round(sum(guardian_delta) / len(guardian_delta), 5) if guardian_delta else None,
+        "improved_trades": sum(1 for x in guardian_delta if x > 1e-9),
+        "harmed_trades": sum(1 for x in guardian_delta if x < -1e-9),
+        "neutral_trades": sum(1 for x in guardian_delta if abs(x) <= 1e-9),
+        "interventions": sum(int(t.guardian_interventions or 0) for t in trades),
+        "policy": "RC3_GUARDIAN_CLOSED_CANDLE_CAUSAL_OVERLAY",
+        "scale_in_pnl_modeled": False,
+    }
     return {
         "n_rows": len(trades), "resolved": len(trades), "wins": wins, "losses": losses,
         "win_rate_pct": round(wins / len(rs) * 100.0, 2) if rs else None,
@@ -366,6 +564,7 @@ def summarize_trades(trades: Sequence[Trade]) -> Dict[str, Any]:
         "symbols": sorted(symbols), "by_symbol": by_symbol,
         "net_evidence_count": len(trades), "net_evidence_pct": 100.0 if trades else 0.0,
         "cost_model": "MODELED_FEES_SLIPPAGE_AND_FUNDING_STRESS",
+        "guardian_operational_replay": guardian_overlay,
     }
 
 

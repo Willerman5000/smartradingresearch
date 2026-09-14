@@ -384,6 +384,15 @@ def _finding(cell, spec, metrics, exec_stats, status, started, data, candidates_
             "selection_uses_final_oos": False,
             "same_bar_tp_sl": "CONSERVATIVE_SL_FIRST",
             "cost_model": "MODELED_FEES_SLIPPAGE_AND_FUNDING_STRESS",
+            # RC3: replay operativo del Guardian sobre la geometría del
+            # especialista. Es diagnóstico RESEARCH_ONLY y nunca entra en
+            # selection_score ni concede autoridad productiva.
+            "guardian_operational_replay": (
+                ((metrics or {}).get("validation") or {}).get("guardian_operational_replay")
+                or ((metrics or {}).get("all") or {}).get("guardian_operational_replay")
+                or {}
+            ),
+            "guardian_operational_replay_selection_authority": False,
             "runtime_contract": contract,
             "runtime_trackable": bool(contract.get("runtime_trackable")),
             "historical_feature_proxy": True,
