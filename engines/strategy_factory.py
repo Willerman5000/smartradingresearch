@@ -211,6 +211,22 @@ def _row_specs(row: Dict[str, Any]) -> Iterable[Tuple[str, str, Dict[str, Any], 
                 "Confluencia de posicionamiento y microestructura para estudiar crowding/continuación/reversión.",
             ))
 
+
+    # 6) Persisted indicator/divergence evidence from the production system.
+    # This gives indicators that cannot be reconstructed from the Research OHLCV
+    # source a statistical role without inventing historical values.
+    tokens = execution_features(row).get("strategy_tokens") if False else None
+    try:
+        from features import strategy_tokens as _strategy_tokens
+        observed_tokens=_strategy_tokens(row)
+    except Exception:
+        observed_tokens=set()
+    indicator_words=("DIVERGENCIA","DIVERGENCE","MACD","RSI","MAVERICK","STOCH","WILLIAMS","CCI","MFI","VWAP","ICHIMOKU","SUPERTREND","PARABOLIC","PSAR","FORCE","OBV","SQUEEZE","BOLLINGER","ATR","ADX","DMI","EMA","VOLUME","FVG","ORDER BLOCK","POC","HVN","LVN","FIBONACCI","VOLUME PROFILE","SWEEP","LIQUIDITY","ORDERFLOW","ORDER FLOW","ORDERBOOK","ORDER BOOK","OPEN INTEREST","FUNDING","BASIS","LIQUIDATION","WHALE","FEAR","GREED","MACRO","CEX")
+    selected=sorted(t for t in observed_tokens if any(w in t for w in indicator_words))[:12]
+    for token in selected:
+        comp_scope=dict(base); comp_scope["indicator_component"]=token[:140]
+        specs.append(("INDICATOR_COMPONENT","PERSISTED",comp_scope,"Componente persistido por Main; Research mide su contribución por celda sin asumir causalidad inexistente."))
+
     return specs
 
 

@@ -40,20 +40,21 @@ PAGE_SIZE = _int("RESEARCH_PAGE_SIZE", 400, 50, 1000)
 WINDOW_DAYS = _int("RESEARCH_WINDOW_DAYS", 180, 30, 730)
 FINDING_LIMIT = _int("RESEARCH_FINDING_LIMIT", 180, 20, 500)
 AUTO_RUN = _bool("RESEARCH_AUTO_RUN", True)
-AUTO_INTERVAL_MINUTES = _int("RESEARCH_AUTO_INTERVAL_MINUTES", 180, 30, 1440)
-# Final V1 RC4.2 — accelerated bootstrap. Research runs faster only while
-# active cells still lack a usable untouched OOS evaluation. Once the matrix is
-# populated it automatically returns to the normal cadence. Repeated no-progress
-# cycles back off so Render/API/Supabase are not hammered.
+AUTO_INTERVAL_MINUTES = _int("RESEARCH_AUTO_INTERVAL_MINUTES", 180, 10, 1440)
+# RC5 — accelerated iterative search. Research stays fast while any active
+# market×symbol×TF cell lacks a CURRENT SHADOW_READY/SHADOW_READY_FAST specialist.
+# Default cadence is 15 minutes (10 is allowed by env). Only after 46/46 cells
+# have a validated Shadow-ready specialist does the system return to 180 minutes.
+# Memory pressure can temporarily back off without lowering any validation gate.
 BOOTSTRAP_ACCELERATED = _bool("RESEARCH_BOOTSTRAP_ACCELERATED", True)
-BOOTSTRAP_FAST_MINUTES = _int("RESEARCH_BOOTSTRAP_FAST_MINUTES", 30, 30, 180)
-BOOTSTRAP_BACKOFF_MINUTES = _int("RESEARCH_BOOTSTRAP_BACKOFF_MINUTES", 60, 30, 360)
+BOOTSTRAP_FAST_MINUTES = _int("RESEARCH_BOOTSTRAP_FAST_MINUTES", 15, 10, 180)
+BOOTSTRAP_BACKOFF_MINUTES = _int("RESEARCH_BOOTSTRAP_BACKOFF_MINUTES", 60, 15, 360)
 BOOTSTRAP_STALL_CYCLES = _int("RESEARCH_BOOTSTRAP_STALL_CYCLES", 3, 1, 12)
 BOOTSTRAP_VALIDATION_DELAY_SECONDS = _int("RESEARCH_BOOTSTRAP_VALIDATION_DELAY_SECONDS", 90, 30, 300)
 BOOT_DELAY_SECONDS = _int("RESEARCH_BOOT_DELAY_SECONDS", 45, 5, 600)
 AUTHORITY = "RESEARCH_ONLY"
-VERSION = "RFV1_11_FINAL_RC42_46CELL_20260914"
-RELEASE_LABEL = "FINAL V1"
+VERSION = "RFV1_12_RC5_ITERATIVE_EDGE_46CELL_20260915"
+RELEASE_LABEL = "V1 · ITERATIVE EDGE"
 VALID_ENGINES = {"execution", "risk", "strategy", "traders", "validation"}
 DASHBOARD_MAX_ROWS = _int("RESEARCH_DASHBOARD_MAX_ROWS", 180, 20, 300)
 
@@ -86,6 +87,14 @@ CAUSAL_VALIDATION_RESCUE = _bool("RESEARCH_CAUSAL_VALIDATION_RESCUE", True)
 CAUSAL_VALIDATION_RESCUE_MAX_CELLS = _int("RESEARCH_CAUSAL_VALIDATION_RESCUE_MAX_CELLS", 12, 0, 40)
 CAUSAL_REGISTRY_RETEST_LIMIT = _int("RESEARCH_CAUSAL_REGISTRY_RETEST_LIMIT", 16, 0, 60)
 CAUSAL_FINALISTS_PER_CELL = _int("RESEARCH_CAUSAL_FINALISTS_PER_CELL", 4, 1, 6)
+
+# RC5 — bounded exhaustive logical search. Each pending cell rotates through a
+# pre-declared indicator/strategy grammar every fast cycle. This is deliberately
+# NOT a random Cartesian search: Final OOS never selects the next wave.
+RC5_SEARCH_WAVES = _int("RESEARCH_RC5_SEARCH_WAVES", 8, 4, 12)
+RC5_BROAD_SEARCH_GUARD = _bool("RESEARCH_RC5_BROAD_SEARCH_GUARD", True)
+RC5_MIN_POSITIVE_FOLD_RATIO = _float("RESEARCH_RC5_MIN_POSITIVE_FOLD_RATIO", 0.75, 0.60, 1.0)
+RC5_DECLARED_CANDIDATE_BUDGET = _int("RESEARCH_RC5_DECLARED_CANDIDATE_BUDGET", 180, 40, 300)
 
 # Current Exchange Flow context is observational only until a trustworthy
 # historical provider exists. It cannot become SHADOW_READY by itself.

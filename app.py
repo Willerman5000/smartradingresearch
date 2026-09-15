@@ -243,6 +243,30 @@ def _upsert_findings(findings, run_id: str, dataset_fingerprint: str):
     return current_keys
 
 
+def _preserve_unretested_causal_keys(current_keys, engine: str, retested_cell_ids=None):
+    """Keep incumbent causal evidence current when no new candles exist.
+
+    Registry retest deliberately skips the same dataset signature. RC5 must not
+    interpret that as "delete the specialist" during the normal 3h cadence.
+    """
+    retested={str(x) for x in (retested_cell_ids or set())}
+    try:
+        rows=central.select('research_findings_v1',params={
+            'select':'feature_key,experiment,meta,research_version,stage',
+            'engine':f'eq.{engine}','research_version':f'eq.{config.VERSION}','limit':'1200',
+        })
+        for row in rows or []:
+            if str(row.get('experiment') or '') not in {'CAUSAL_COVERAGE_STRATEGY','CAUSAL_REGISTRY_RETEST','CAUSAL_SHADOW_RECYCLE'}: continue
+            meta=row.get('meta') or {}
+            if meta.get('is_current') is False or str(row.get('stage') or '')=='STALE': continue
+            cid=str(meta.get('coverage_cell_id') or '')
+            if cid and cid in retested: continue
+            key=str(row.get('feature_key') or '')
+            if key: current_keys.add(key)
+    except Exception as exc:
+        print(f'⚠️ preserve causal incumbents: {exc}',flush=True)
+
+
 def _mark_stale_findings(current_keys, run_id: str, engine: str | None = None):
     engine = str(engine or config.ENGINE)
     try:
@@ -315,7 +339,11 @@ def _best_causal_per_cell(rows):
             continue
         metrics=row.get('metrics') or {}
         val=metrics.get('validation') or {}
+        # RC5: newest validation state for the cell wins before stage. An older
+        # SHADOW_READY must never keep a cell green after a newer retest
+        # downgraded it to VALIDATION_REQUIRED/REJECTED.
         score=(
+            str(row.get('updated_at') or ''),
             _stage_priority(row.get('stage')),
             float(val.get('expectancy_r') if val.get('expectancy_r') is not None else -999),
             float(val.get('profit_factor') if val.get('profit_factor') is not None else -999),
@@ -588,45 +616,38 @@ def _priority_cells_for_engine(engine: str):
 
 
 def _bootstrap_status(engine: str | None = None):
-    """Return active cells still lacking a usable untouched Final OOS sample.
+    """RC5 fast-search status: a cell completes only at Shadow-ready.
 
-    A cell is considered *populated*, not profitable, once it has a current
-    causal finding with at least one Final OOS result. Negative OOS is still a
-    valid populated cell and remains in the normal iterative research loop.
+    Merely having Final OOS data is no longer enough to slow Research. The
+    accelerated loop continues for every active market×symbol×TF until
+    Validation has a current SHADOW_READY/SHADOW_READY_FAST specialist.
     """
     owner = str(engine or config.ENGINE).lower()
     expected = [c for c in all_coverage_cells() if owner == "validation" or owner_for_cell(c) == owner]
     expected_ids = {coverage_cell_id(c) for c in expected}
     if not expected_ids:
-        return {"expected": 0, "complete": 0, "pending_ids": set()}
+        return {"expected":0,"complete":0,"pending_ids":set()}
     try:
-        rows = central.paged_select('research_findings_v1', params={
-            'select':'engine,experiment,stage,metrics,meta,research_version,updated_at',
-            'research_version':f'eq.{config.VERSION}',
-            'experiment':'eq.CAUSAL_COVERAGE_STRATEGY',
-            'order':'updated_at.desc',
-        }, max_rows=1600, page_size=300)
+        rows=central.paged_select('research_promotions_v1',params={
+            'select':'stage,meta,research_version,updated_at,source_engine',
+            'research_version':f'eq.{config.VERSION}','order':'updated_at.desc',
+        },max_rows=1600,page_size=300)
     except Exception as exc:
-        print(f'⚠️ bootstrap status: {exc}', flush=True)
-        return {"expected": len(expected_ids), "complete": 0, "pending_ids": expected_ids, "read_error": True}
-    complete=set()
+        print(f'⚠️ bootstrap status: {exc}',flush=True)
+        return {"expected":len(expected_ids),"complete":0,"pending_ids":expected_ids,"read_error":True}
+    complete=set(); seen=set()
+    # Rows arrive newest first. Only the newest current state for each cell can
+    # satisfy bootstrap. An old SHADOW_READY must never hide a later downgrade
+    # to VALIDATION_REQUIRED/REJECTED_OOS.
     for row in rows or []:
         meta=row.get('meta') or {}
-        if meta.get('is_current') is False or str(row.get('stage') or '').upper() == 'STALE':
-            continue
+        if meta.get('is_current') is False or str(row.get('stage') or '').upper()=='STALE': continue
         cid=str(meta.get('coverage_cell_id') or '')
-        if cid not in expected_ids:
-            continue
-        metrics=row.get('metrics') or {}
-        val=metrics.get('validation') or {}
-        try:
-            oos_n=int(val.get('resolved') or 0)
-        except Exception:
-            oos_n=0
-        if oos_n > 0:
+        if cid not in expected_ids or cid in seen: continue
+        seen.add(cid)
+        if str(row.get('stage') or '').upper() in {'SHADOW_READY','SHADOW_READY_FAST'}:
             complete.add(cid)
-    pending=expected_ids-complete
-    return {"expected": len(expected_ids), "complete": len(complete), "pending_ids": pending}
+    return {"expected":len(expected_ids),"complete":len(complete),"pending_ids":expected_ids-complete}
 
 
 def _bootstrap_interval_minutes():
@@ -651,14 +672,15 @@ def _bootstrap_interval_minutes():
     _state['bootstrap_prev_pending']=count
     _state['bootstrap_stall_cycles']=stalls
 
-    # Under memory pressure or after repeated no-progress cycles, back off.
+    # Back off only under memory pressure. Lack of progress does NOT slow the
+    # search while any active cell still lacks a current Shadow-ready specialist.
     pressure = rss_mb() >= min(float(getattr(config, 'CAUSAL_MEMORY_TARGET_MB', 390)), float(getattr(config, 'MEMORY_HARD_MB', 430)) - 20.0)
-    if pressure or stalls >= int(getattr(config, 'BOOTSTRAP_STALL_CYCLES', 3)):
+    if pressure:
         mode='BOOTSTRAP_BACKOFF'
         minutes=int(getattr(config, 'BOOTSTRAP_BACKOFF_MINUTES', 60))
     else:
         mode='BOOTSTRAP_FAST'
-        minutes=int(getattr(config, 'BOOTSTRAP_FAST_MINUTES', 30))
+        minutes=int(getattr(config, 'BOOTSTRAP_FAST_MINUTES', 15))
     _state['bootstrap_mode']=mode
     return minutes, pending, mode
 
@@ -697,14 +719,17 @@ def _run_job(days: int, max_rows: int):
                     current_keys.update(_upsert_findings([finding], run_id, fingerprint))
                 bootstrap = _bootstrap_status(config.ENGINE) if bool(getattr(config, 'BOOTSTRAP_ACCELERATED', True)) else {"pending_ids": set()}
                 bootstrap_pending = set(bootstrap.get('pending_ids') or set())
-                causal_findings = analyze_coverage_for_engine(
-                    config.ENGINE,
-                    on_finding=_publish_causal,
-                    priority_cell_ids=_priority_cells_for_engine(config.ENGINE),
-                    # During initial population, spend causal compute only on
-                    # incomplete cells. Once populated, normal iterative runs
-                    # revisit the complete lane every RESEARCH_AUTO_INTERVAL.
-                    only_cell_ids=bootstrap_pending if bootstrap_pending else None,
+                # RC5: broad candidate search runs only for cells that are not
+                # Shadow-ready. Once the whole lane is validated, the 3h cycle
+                # retests incumbents on new candles rather than replacing a
+                # proven specialist merely because a different search wave ran.
+                causal_findings = (
+                    analyze_coverage_for_engine(
+                        config.ENGINE,
+                        on_finding=_publish_causal,
+                        priority_cell_ids=_priority_cells_for_engine(config.ENGINE),
+                        only_cell_ids=bootstrap_pending,
+                    ) if bootstrap_pending else []
                 )
                 _state['last_causal_cells'] = len({
                     str((x.get('meta') or {}).get('coverage_cell_id') or '')
@@ -720,6 +745,12 @@ def _run_job(days: int, max_rows: int):
                 # historical window. This is separate from live Shadow evidence.
                 retest_source=_causal_retest_promotions_for_engine(config.ENGINE)
                 retest_findings=retest_registry_promotions(retest_source, config.ENGINE, on_finding=_publish_causal)
+                retested_ids={str((x.get('meta') or {}).get('coverage_cell_id') or '') for x in retest_findings}
+                # Once all cells are Shadow-ready, broad search pauses. Preserve
+                # incumbents if their dataset signature has not changed; when a
+                # real retest exists for a cell, the new finding replaces it.
+                if not bootstrap_pending:
+                    _preserve_unretested_causal_keys(current_keys, config.ENGINE, retested_ids)
 
                 if config.ENGINE == 'strategy':
                     flow = current_exchange_flow_finding()
@@ -842,7 +873,7 @@ def _auto_loop():
         except Exception as exc:
             print(f'⚠️ auto-loop {config.ENGINE}: {exc}', flush=True)
             minutes = int(getattr(config, 'BOOTSTRAP_BACKOFF_MINUTES', 60))
-        time.sleep(max(30, int(minutes)) * 60)
+        time.sleep(max(10, int(minutes)) * 60)
 
 
 if config.ENGINE not in config.VALID_ENGINES:

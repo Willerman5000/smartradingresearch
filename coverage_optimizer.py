@@ -22,6 +22,7 @@ SHADOW_READY. Final OOS never ranks candidates.
 import hashlib
 import json
 import time
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
@@ -93,69 +94,90 @@ def _wait_bars(tf: str) -> int:
     return {"30M": 3, "1H": 3, "2H": 3, "4H": 2, "12H": 2, "1D": 2, "1W": 1}.get(tf, 3)
 
 
-def _coarse_specs(tf: str) -> List[StrategySpec]:
-    """Pre-declared universe. No Final OOS value is used to create/rank it."""
-    h = _hold_bars(tf); w = _wait_bars(tf)
-    specs: List[StrategySpec] = []
-    for direction in ("LONG", "SHORT"):
-        # Trend continuation, including normal/expansion volatility specialists.
-        for fast, slow in ((9, 21), (12, 36), (21, 50)):
-            for strength in (0.0, 0.35):
-                specs.append(StrategySpec(
-                    "TREND_CONTINUATION", direction, fast=fast, slow=slow,
-                    rsi_low=46, rsi_high=54, sl_atr=1.5, rr=2.0,
-                    max_wait=w, max_hold=h, trend_strength_min=strength,
-                ))
-        # Pullback specialists; often better geometry than market entry.
-        for fast, slow in ((9, 21), (12, 36), (21, 50)):
-            specs.append(StrategySpec(
-                "TREND_PULLBACK", direction, fast=fast, slow=slow,
-                rsi_low=43, rsi_high=57, entry_style="PULLBACK", entry_atr=0.25,
-                sl_atr=1.5, rr=2.0, max_wait=w, max_hold=h,
-                trend_strength_min=0.25,
-            ))
-        # Breakout family with volume and volatility variants.
-        for lb, vm, vol in ((12, 0.85, "ANY"), (20, 1.0, "NORMAL"), (30, 1.10, "EXPANSION")):
-            specs.append(StrategySpec(
-                "BREAKOUT_RETEST", direction, fast=12, slow=36, lookback=lb,
-                volume_mult=vm, sl_atr=1.5, rr=2.0, max_wait=w, max_hold=h,
-                volatility_mode=vol,
-            ))
-        # Range mean reversion.
-        for low, high, vol in ((25, 75, "ANY"), (30, 70, "NORMAL"), (35, 65, "QUIET")):
-            specs.append(StrategySpec(
-                "MEAN_REVERSION", direction, fast=12, slow=36,
-                rsi_low=low, rsi_high=high, sl_atr=1.25, rr=1.75,
-                max_wait=w, max_hold=h, volatility_mode=vol,
-            ))
-        # Liquidity sweep / reversal.
-        for lb in (10, 20, 30):
-            specs.append(StrategySpec(
-                "SWEEP_REVERSAL", direction, fast=12, slow=36,
-                rsi_low=48, rsi_high=52, lookback=lb, sl_atr=1.25, rr=2.0,
-                max_wait=w, max_hold=h,
-            ))
-        # Additional bounded families improve symbol-specific specialization.
-        for fast, slow in ((9, 21), (12, 36)):
-            specs.append(StrategySpec(
-                "EMA_RECLAIM", direction, fast=fast, slow=slow,
-                sl_atr=1.35, rr=2.0, max_wait=w, max_hold=h,
-                trend_strength_min=0.20,
-            ))
-        for low, high in ((45, 55), (42, 58), (40, 60)):
-            specs.append(StrategySpec(
-                "RSI_TREND", direction, fast=12, slow=36,
-                rsi_low=low, rsi_high=high, sl_atr=1.5, rr=2.0,
-                max_wait=w, max_hold=h, trend_strength_min=0.25,
-            ))
-        for low, high, vm in ((42, 58, 0.9), (40, 60, 1.0)):
-            specs.append(StrategySpec(
-                "MOMENTUM_BREAKOUT", direction, fast=9, slow=21,
-                rsi_low=low, rsi_high=high, volume_mult=vm,
-                sl_atr=1.5, rr=2.25, max_wait=w, max_hold=h,
-                volatility_mode="EXPANSION", trend_strength_min=0.25,
-            ))
+SEARCH_WAVE_NAMES=("CORE","TREND","OSCILLATORS","DIVERGENCES","VOLATILITY","FLOW_STRUCTURE","COMPOSITE","ALT_PARAMS")
+
+# Inventory covered by causal OHLCV replay vs observational historical features.
+INDICATOR_COVERAGE_MANIFEST={
+    "causal_ohlcv":["EMA","RSI","RSI_MULTI","MACD","STOCHASTIC","ATR","ADX_DMI","BOLLINGER","VOLUME","VWAP","MFI","FORCE_INDEX","OBV","CCI","WILLIAMS_R","SUPERTREND_PROXY","PARABOLIC_SAR","ICHIMOKU","FIBONACCI_RETRACE","FVG_PROXY","VOLUME_PROFILE_POC_PROXY","HVN_LVN_PROFILE_PROXY","STRUCTURE_SWEEP","DIVERGENCES_REGULAR_HIDDEN","RSI_MAVERICK"],
+    "observational_only_without_trustworthy_historical_series":["ORDER_FLOW","ORDER_BOOK","OPEN_INTEREST","FUNDING","BASIS","LIQUIDATION_HEATMAP","WHALE_ACTIVITY","FEAR_GREED","MACRO_NEWS","CEX_FLOWS_RESERVES","SENTIMENT"],
+}
+
+
+def _search_wave(cell: Tuple[str,str,str,str]) -> tuple[int,str]:
+    # Result-independent rotation: time slot + stable cell hash. OOS never selects
+    # what is tried next, which reduces adaptive p-hacking risk.
+    slot=max(1,int(getattr(config,"BOOTSTRAP_FAST_MINUTES",15)))*60
+    epoch=int(time.time()//slot)
+    h=int(hashlib.sha256(coverage_cell_id(cell).encode()).hexdigest()[:8],16)
+    idx=(epoch+h)%min(len(SEARCH_WAVE_NAMES),int(getattr(config,"RC5_SEARCH_WAVES",8)))
+    return idx,SEARCH_WAVE_NAMES[idx]
+
+
+def _core_specs(tf: str) -> List[StrategySpec]:
+    h = _hold_bars(tf); w = _wait_bars(tf); specs=[]
+    for direction in ("LONG","SHORT"):
+        for fast,slow in ((9,21),(12,36),(21,50)):
+            for strength in (0.0,0.35): specs.append(StrategySpec("TREND_CONTINUATION",direction,fast=fast,slow=slow,rsi_low=46,rsi_high=54,sl_atr=1.5,rr=2,max_wait=w,max_hold=h,trend_strength_min=strength))
+            specs.append(StrategySpec("TREND_PULLBACK",direction,fast=fast,slow=slow,rsi_low=43,rsi_high=57,entry_style="PULLBACK",entry_atr=.25,sl_atr=1.5,rr=2,max_wait=w,max_hold=h,trend_strength_min=.25))
+        for lb,vm,vol in ((12,.85,"ANY"),(20,1,"NORMAL"),(30,1.1,"EXPANSION")): specs.append(StrategySpec("BREAKOUT_RETEST",direction,lookback=lb,volume_mult=vm,sl_atr=1.5,rr=2,max_wait=w,max_hold=h,volatility_mode=vol))
+        for low,high,vol in ((25,75,"ANY"),(30,70,"NORMAL"),(35,65,"QUIET")): specs.append(StrategySpec("MEAN_REVERSION",direction,rsi_low=low,rsi_high=high,sl_atr=1.25,rr=1.75,max_wait=w,max_hold=h,volatility_mode=vol))
+        for lb in (10,20,30): specs.append(StrategySpec("SWEEP_REVERSAL",direction,rsi_low=48,rsi_high=52,lookback=lb,sl_atr=1.25,rr=2,max_wait=w,max_hold=h))
+        for fast,slow in ((9,21),(12,36)): specs.append(StrategySpec("EMA_RECLAIM",direction,fast=fast,slow=slow,sl_atr=1.35,rr=2,max_wait=w,max_hold=h,trend_strength_min=.2))
+        for low,high in ((45,55),(42,58),(40,60)): specs.append(StrategySpec("RSI_TREND",direction,rsi_low=low,rsi_high=high,sl_atr=1.5,rr=2,max_wait=w,max_hold=h,trend_strength_min=.25))
+        for low,high,vm in ((42,58,.9),(40,60,1)): specs.append(StrategySpec("MOMENTUM_BREAKOUT",direction,fast=9,slow=21,rsi_low=low,rsi_high=high,volume_mult=vm,sl_atr=1.5,rr=2.25,max_wait=w,max_hold=h,volatility_mode="EXPANSION",trend_strength_min=.25))
     return specs
+
+
+def _wave_specs(tf: str, wave: str) -> List[StrategySpec]:
+    h=_hold_bars(tf); w=_wait_bars(tf); specs=[]; wave=str(wave).upper()
+    if wave=="CORE": return _core_specs(tf)
+    for d in ("LONG","SHORT"):
+        if wave=="TREND":
+            for fast,slow in ((9,21),(12,26),(12,36),(21,50)):
+                specs += [StrategySpec("MACD_TREND",d,fast=fast,slow=slow,signal_period=9,sl_atr=1.5,rr=2.25,max_wait=w,max_hold=h,trend_strength_min=.2,indicator="MACD"),StrategySpec("SUPERTREND_PULLBACK",d,fast=fast,slow=slow,entry_style="PULLBACK",entry_atr=.3,sl_atr=1.6,rr=2.25,max_wait=w,max_hold=h,indicator="SUPERTREND")]
+            specs.append(StrategySpec("PSAR_TREND",d,sl_atr=1.45,rr=2.25,max_wait=w,max_hold=h,trend_strength_min=.15,indicator="PARABOLIC_SAR"))
+            for adx in (20,25,30): specs.append(StrategySpec("ADX_DI_TREND",d,rsi_high=adx,aux_period=14,sl_atr=1.5,rr=2.25,max_wait=w,max_hold=h,indicator="ADX_DMI"))
+            specs.append(StrategySpec("ICHIMOKU_TREND",d,sl_atr=1.6,rr=2.5,max_wait=w,max_hold=h,indicator="ICHIMOKU"))
+        elif wave=="OSCILLATORS":
+            for period in (7,10,14,21):
+                specs += [StrategySpec("STOCH_REVERSAL",d,aux_period=period,rsi_low=20,rsi_high=80,sl_atr=1.2,rr=1.8,max_wait=w,max_hold=h,volatility_mode="NORMAL",indicator="STOCHASTIC"),StrategySpec("MFI_REVERSAL",d,aux_period=period,rsi_low=20,rsi_high=80,sl_atr=1.25,rr=1.8,max_wait=w,max_hold=h,indicator="MFI")]
+            for threshold in (80,100,120): specs.append(StrategySpec("CCI_WILLIAMS_REVERSAL",d,rsi_high=threshold,aux_period=20,sl_atr=1.25,rr=1.9,max_wait=w,max_hold=h,indicator="CCI_WILLIAMS"))
+            specs.append(StrategySpec("MULTI_RSI_TREND",d,fast=9,slow=21,sl_atr=1.4,rr=2.2,max_wait=w,max_hold=h,trend_strength_min=.2,indicator="RSI_MULTI"))
+            for lo,hi,bm in ((0.15,0.85,2.0),(0.20,0.80,2.0),(0.25,0.75,2.5)):
+                specs.append(StrategySpec("RSI_MAVERICK_REVERSAL",d,rsi_low=lo,rsi_high=hi,aux_period=20,band_mult=bm,sl_atr=1.25,rr=1.9,max_wait=w,max_hold=h,indicator="RSI_MAVERICK"))
+        elif wave=="DIVERGENCES":
+            for ind in ("RSI","RSI_MAVERICK","MACD","STOCH","MFI","CCI","WILLIAMS","OBV","FORCE_INDEX"):
+                for lb in (14,20,30):
+                    specs.append(StrategySpec("DIVERGENCE_REVERSAL",d,lookback=lb,sl_atr=1.3,rr=2.2,max_wait=w,max_hold=h,indicator=ind,divergence_mode="REGULAR"))
+                    specs.append(StrategySpec("HIDDEN_DIVERGENCE_TREND",d,lookback=lb,sl_atr=1.45,rr=2.4,max_wait=w,max_hold=h,trend_strength_min=.2,indicator=ind,divergence_mode="HIDDEN"))
+        elif wave=="VOLATILITY":
+            for bm in (1.8,2.0,2.2):
+                specs += [StrategySpec("BOLLINGER_REVERSION",d,band_mult=bm,sl_atr=1.2,rr=1.8,max_wait=w,max_hold=h,volatility_mode="NORMAL",indicator="BOLLINGER"),StrategySpec("BOLLINGER_SQUEEZE",d,band_mult=bm,volume_mult=1.0,sl_atr=1.5,rr=2.5,max_wait=w,max_hold=h,volatility_mode="EXPANSION",indicator="BOLLINGER_SQUEEZE")]
+            specs.append(StrategySpec("VWAP_REVERSION",d,sl_atr=1.25,rr=1.8,max_wait=w,max_hold=h,volatility_mode="NORMAL",indicator="VWAP"))
+        elif wave=="FLOW_STRUCTURE":
+            specs += [StrategySpec("MFI_OBV_FLOW",d,sl_atr=1.45,rr=2.2,max_wait=w,max_hold=h,trend_strength_min=.2,indicator="MFI_OBV_FORCE")]
+            for lb in (20,30,50): specs.append(StrategySpec("FIB_RETRACE_TREND",d,lookback=lb,entry_style="PULLBACK",entry_atr=.18,sl_atr=1.5,rr=2.5,max_wait=w,max_hold=h,trend_strength_min=.2,indicator="FIBONACCI"))
+            # Structure/liquidity is causally represented by sweep/retest families.
+            for lb in (12,20,36):
+                specs.append(StrategySpec("SWEEP_REVERSAL",d,lookback=lb,volume_mult=.9,sl_atr=1.3,rr=2.25,max_wait=w,max_hold=h,indicator="STRUCTURE_SWEEP"))
+                specs.append(StrategySpec("FVG_RECLAIM",d,lookback=lb,entry_style="PULLBACK",entry_atr=.18,sl_atr=1.4,rr=2.4,max_wait=w,max_hold=h,trend_strength_min=.15,indicator="FVG"))
+            specs.append(StrategySpec("VOLUME_PROFILE_RETEST",d,lookback=50,sl_atr=1.5,rr=2.3,max_wait=w,max_hold=h,trend_strength_min=.15,indicator="VOLUME_PROFILE_POC"))
+            specs.append(StrategySpec("VOLUME_PROFILE_NODE_REACTION",d,lookback=50,sl_atr=1.5,rr=2.4,max_wait=w,max_hold=h,trend_strength_min=.10,indicator="HVN_LVN_PROFILE"))
+        elif wave=="COMPOSITE":
+            # Only economically interpretable 2-3 family confluences, never arbitrary Cartesian combinations.
+            specs += [StrategySpec("MOMENTUM_BREAKOUT",d,fast=12,slow=36,rsi_low=44,rsi_high=56,volume_mult=1.05,sl_atr=1.5,rr=2.5,max_wait=w,max_hold=h,volatility_mode="EXPANSION",trend_strength_min=.35,indicator="EMA_RSI_VOLUME"),StrategySpec("MFI_OBV_FLOW",d,fast=12,slow=36,sl_atr=1.5,rr=2.4,max_wait=w,max_hold=h,trend_strength_min=.35,indicator="TREND_FLOW"),StrategySpec("SUPERTREND_PULLBACK",d,fast=12,slow=36,entry_style="PULLBACK",entry_atr=.3,sl_atr=1.5,rr=2.5,max_wait=w,max_hold=h,trend_strength_min=.3,indicator="SUPERTREND_RSI")]
+        elif wave=="ALT_PARAMS":
+            for rlen in (7,10,14,21,28):
+                for lo,hi in ((38,62),(40,60),(42,58),(45,55)):
+                    specs.append(StrategySpec("RSI_TREND",d,rsi_len=rlen,rsi_low=lo,rsi_high=hi,fast=12,slow=36,sl_atr=1.5,rr=2.2,max_wait=w,max_hold=h,trend_strength_min=.2,indicator="RSI"))
+            for fast,slow in ((5,13),(8,21),(9,21),(12,26),(20,50)):
+                specs.append(StrategySpec("TREND_CONTINUATION",d,fast=fast,slow=slow,rsi_low=46,rsi_high=54,sl_atr=1.5,rr=2.2,max_wait=w,max_hold=h,trend_strength_min=.2,indicator="EMA"))
+    return specs or _core_specs(tf)
+
+
+def _coarse_specs(tf: str) -> List[StrategySpec]:
+    """Compatibility helper: core declared universe only; RC5 rotates extra waves separately."""
+    return _core_specs(tf)
 
 
 def _refine(seed: StrategySpec, tf: str = "") -> Iterable[StrategySpec]:
@@ -175,6 +197,9 @@ def _refine(seed: StrategySpec, tf: str = "") -> Iterable[StrategySpec]:
                     sl_atr=sl, rr=rr, max_wait=seed.max_wait, max_hold=seed.max_hold,
                     volatility_mode=seed.volatility_mode,
                     trend_strength_min=seed.trend_strength_min,
+                    indicator=seed.indicator, aux_period=seed.aux_period,
+                    signal_period=seed.signal_period, band_mult=seed.band_mult,
+                    divergence_mode=seed.divergence_mode,
                 )
 
 
@@ -188,9 +213,9 @@ def _scope(cell: Tuple[str, str, str, str], spec: StrategySpec) -> Dict[str, str
     scope = {"market_family": family, "timeframe": tf, "symbol": symbol}
     if spec.direction_mode in {"LONG", "SHORT"}:
         scope["direction"] = spec.direction_mode
-    if spec.family in {"TREND_CONTINUATION", "TREND_PULLBACK", "EMA_RECLAIM", "RSI_TREND", "MOMENTUM_BREAKOUT"}:
+    if spec.family in {"TREND_CONTINUATION", "TREND_PULLBACK", "EMA_RECLAIM", "RSI_TREND", "MOMENTUM_BREAKOUT", "MACD_TREND", "ADX_DI_TREND", "SUPERTREND_PULLBACK", "MFI_OBV_FLOW", "FIB_RETRACE_TREND", "HIDDEN_DIVERGENCE_TREND", "MULTI_RSI_TREND", "ICHIMOKU_TREND", "VOLUME_PROFILE_RETEST", "FVG_RECLAIM"}:
         scope["regime"] = "TREND_UP" if spec.direction_mode == "LONG" else "TREND_DOWN"
-    elif spec.family == "MEAN_REVERSION":
+    elif spec.family in {"MEAN_REVERSION","STOCH_REVERSAL","CCI_WILLIAMS_REVERSAL","MFI_REVERSAL","RSI_MAVERICK_REVERSAL","BOLLINGER_REVERSION","VWAP_REVERSION","DIVERGENCE_REVERSAL"}:
         scope["regime"] = "BALANCE"
     if spec.family == "TREND_PULLBACK":
         scope["has_pullback"] = "YES"
@@ -297,8 +322,10 @@ def optimize_cell_candidates(cell: Tuple[str, str, str, str], owner_engine: str 
     if not data:
         return [_finding(cell, None, {}, {}, "NO_HISTORY", started, data, owner_engine=owner_engine, finalist_rank=1)]
 
+    wave_idx, wave_name = _search_wave(cell)
+    declared_specs = _wave_specs(tf, wave_name)
     coarse = []
-    for spec in _coarse_specs(tf):
+    for spec in declared_specs:
         metrics, exec_stats = _evaluate(data, system_type, spec)
         coarse.append((selection_score(metrics), spec, metrics, exec_stats))
         if rss_mb() >= getattr(config, "MEMORY_HARD_MB", 430):
@@ -334,6 +361,7 @@ def optimize_cell_candidates(cell: Tuple[str, str, str, str], owner_engine: str 
             cell, spec, metrics, exec_stats, status, started, data,
             candidates_tested=len(refined), owner_engine=owner_engine,
             finalist_rank=rank, finalists_tested=len(finalists),
+            search_wave=wave_name, search_wave_index=wave_idx, declared_candidates=len(declared_specs),
         ))
     return out
 
@@ -362,7 +390,7 @@ def _causal_dataset_signature(data: Dict[str, Sequence[Any]]) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:24]
 
 
-def _finding(cell, spec, metrics, exec_stats, status, started, data, candidates_tested=0, owner_engine=None, finalist_rank=1, finalists_tested=1):
+def _finding(cell, spec, metrics, exec_stats, status, started, data, candidates_tested=0, owner_engine=None, finalist_rank=1, finalists_tested=1, search_wave="REGISTRY", search_wave_index=-1, declared_candidates=1):
     system_type, family, symbol, tf = cell
     if spec is None:
         spec = StrategySpec("NONE", "BOTH", max_hold=_hold_bars(tf), max_wait=_wait_bars(tf))
@@ -424,6 +452,12 @@ def _finding(cell, spec, metrics, exec_stats, status, started, data, candidates_
             "signals_seen": int((exec_stats or {}).get("signals") or 0),
             "entries_activated": int((exec_stats or {}).get("activated") or 0),
             "candidates_tested": int(candidates_tested),
+            "search_space_version": "RC5_LOGICAL_GRAMMAR_V1",
+            "search_wave": str(search_wave),
+            "search_wave_index": int(search_wave_index),
+            "declared_candidate_budget": int(declared_candidates),
+            "broad_indicator_search": str(search_wave) not in {"CORE","REGISTRY"},
+            "indicator_manifest": INDICATOR_COVERAGE_MANIFEST,
             "source_series": len(data),
             "source_bars": sum(len(x) for x in data.values()),
             "causal_dataset_signature": _causal_dataset_signature(data),

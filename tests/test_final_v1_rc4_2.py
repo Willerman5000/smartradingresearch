@@ -12,7 +12,7 @@ def test_final_contract_and_bootstrap_policy():
     assert len(cells) == 46
     assert len({coverage_cell_id(c) for c in cells}) == 46
     assert config.BOOTSTRAP_ACCELERATED is True
-    assert config.BOOTSTRAP_FAST_MINUTES == 30
+    assert config.BOOTSTRAP_FAST_MINUTES == 15
     assert config.BOOTSTRAP_BACKOFF_MINUTES >= 60
     assert config.AUTO_INTERVAL_MINUTES == 180
 
@@ -37,4 +37,5 @@ def test_retired_fast_timeframes_are_excluded_from_new_observational_learning():
     assert "{'30M','1H','2H','4H'}" in src
     assert "{'12H','1D'}" in src
     assert 'BOOTSTRAP_FAST' in src
-    assert 'only_cell_ids=bootstrap_pending if bootstrap_pending else None' in src
+    assert 'only_cell_ids=bootstrap_pending' in src
+    assert 'if bootstrap_pending else []' in src

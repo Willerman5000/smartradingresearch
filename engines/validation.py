@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import Any, Dict, List, Tuple
+import math
 import config
 from config import VERSION
 from db import utc_now
@@ -76,7 +77,9 @@ def analyze_findings(rows: List[Dict[str,Any]]) -> List[Dict[str,Any]]:
         symbols=allm.get("symbols") or []
         fam=str(scope.get("market_family") or "")
         valid_folds, positive_ratio = _stability(metrics)
-        stable = valid_folds >= 2 and positive_ratio is not None and positive_ratio >= 0.67
+        broad_search = bool(row_meta.get("broad_indicator_search"))
+        min_fold_ratio = float(getattr(config,"RC5_MIN_POSITIVE_FOLD_RATIO",0.75)) if broad_search and bool(getattr(config,"RC5_BROAD_SEARCH_GUARD",True)) else 0.67
+        stable = valid_folds >= 2 and positive_ratio is not None and positive_ratio >= min_fold_ratio
         contract = row_meta.get("runtime_contract") or {}
         runtime_trackable = bool(contract.get("runtime_trackable", row_meta.get("runtime_trackable", False)))
         shadow_target=canary_target=None
@@ -96,6 +99,13 @@ def analyze_findings(rows: List[Dict[str,Any]]) -> List[Dict[str,Any]]:
             reason="Contexto CEX actual; sin histórico causal no puede promover ni vetar producción."
         elif is_causal:
             min_n,min_vn,min_exp,min_pf=_causal_thresholds(scope)
+            # Multiple-testing guard for the broadened RC5 indicator grammar.
+            # Search breadth may discover candidates, but promotion is harder, not easier.
+            if broad_search and bool(getattr(config,"RC5_BROAD_SEARCH_GUARD",True)):
+                budget=max(1,int(row_meta.get("declared_candidate_budget") or 1))
+                penalty=min(0.08, 0.01*math.log2(max(2,budget)))
+                min_exp += penalty
+                min_pf += min(0.10, penalty)
             if vn>=min_vn and vexp is not None and vexp<=-0.15:
                 stage="REJECTED_OOS"
                 reason="Replay causal: OOS final negativo; puede degradar/vetar la hipótesis, no promover."

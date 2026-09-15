@@ -41,6 +41,13 @@ class StrategySpec:
     # I.2: bounded specialist filters. They are evaluated with data <= bar i.
     volatility_mode: str = "ANY"  # ANY | QUIET | NORMAL | EXPANSION
     trend_strength_min: float = 0.0  # abs(EMAfast-EMAslow)/ATR
+    # RC5 bounded indicator grammar. These parameters are declared before OOS
+    # and let Research use the system indicator inventory without random mixing.
+    indicator: str = "RSI"
+    aux_period: int = 14
+    signal_period: int = 9
+    band_mult: float = 2.0
+    divergence_mode: str = "NONE"  # NONE | REGULAR | HIDDEN
 
     def key(self) -> str:
         return (
@@ -48,7 +55,9 @@ class StrategySpec:
             f"r{self.rsi_len}:{self.rsi_low:g}-{self.rsi_high:g}:lb{self.lookback}:"
             f"v{self.volume_mult:g}:{self.entry_style}:{self.entry_atr:g}:"
             f"sl{self.sl_atr:g}:rr{self.rr:g}:w{self.max_wait}:h{self.max_hold}:"
-            f"vol{self.volatility_mode}:ts{self.trend_strength_min:g}"
+            f"vol{self.volatility_mode}:ts{self.trend_strength_min:g}:"
+            f"ind{self.indicator}:aux{self.aux_period}:sig{self.signal_period}:"
+            f"bm{self.band_mult:g}:div{self.divergence_mode}"
         )
 
 
@@ -143,20 +152,267 @@ def _rolling_mean(values: Sequence[float], period: int) -> List[float]:
     return out
 
 
+
+def _rolling_std(values: Sequence[float], period: int) -> List[float]:
+    out=[]
+    q=deque()
+    for x in values:
+        q.append(float(x))
+        if len(q)>period: q.popleft()
+        m=sum(q)/max(1,len(q))
+        out.append(math.sqrt(sum((v-m)**2 for v in q)/max(1,len(q))))
+    return out
+
+
+def _macd(closes: Sequence[float], fast: int=12, slow: int=26, signal: int=9):
+    ef=_ema(closes, fast); es=_ema(closes, slow)
+    line=[a-b for a,b in zip(ef,es)]
+    sig=_ema(line, signal)
+    hist=[a-b for a,b in zip(line,sig)]
+    return line,sig,hist
+
+
+def _stochastic(candles: Sequence[Candle], period: int=14) -> List[float]:
+    out=[]
+    for i,c in enumerate(candles):
+        w=candles[max(0,i-period+1):i+1]
+        lo=min(x.low for x in w); hi=max(x.high for x in w)
+        out.append(50.0 if hi<=lo else (c.close-lo)/(hi-lo)*100.0)
+    return out
+
+
+def _williams(candles: Sequence[Candle], period: int=14) -> List[float]:
+    return [x-100.0 for x in _stochastic(candles,period)]
+
+
+def _cci(candles: Sequence[Candle], period: int=20) -> List[float]:
+    tp=[(c.high+c.low+c.close)/3.0 for c in candles]
+    ma=_rolling_mean(tp,period); out=[]
+    for i,x in enumerate(tp):
+        w=tp[max(0,i-period+1):i+1]; m=ma[i]
+        dev=sum(abs(v-m) for v in w)/max(1,len(w))
+        out.append(0.0 if dev<=1e-12 else (x-m)/(0.015*dev))
+    return out
+
+
+def _obv(candles: Sequence[Candle]) -> List[float]:
+    out=[0.0]
+    for i in range(1,len(candles)):
+        sign=1 if candles[i].close>candles[i-1].close else (-1 if candles[i].close<candles[i-1].close else 0)
+        out.append(out[-1]+sign*float(candles[i].volume))
+    return out
+
+
+def _mfi(candles: Sequence[Candle], period: int=14) -> List[float]:
+    tp=[(c.high+c.low+c.close)/3.0 for c in candles]
+    pos=[0.0]*len(candles); neg=[0.0]*len(candles)
+    for i in range(1,len(candles)):
+        flow=tp[i]*float(candles[i].volume)
+        if tp[i]>=tp[i-1]: pos[i]=flow
+        else: neg[i]=flow
+    out=[]
+    for i in range(len(candles)):
+        a=max(0,i-period+1); ps=sum(pos[a:i+1]); ns=sum(neg[a:i+1])
+        out.append(100.0 if ns<=1e-12 else 100.0-(100.0/(1.0+ps/ns)))
+    return out
+
+
+def _adx_dmi(candles: Sequence[Candle], period: int=14):
+    n=len(candles); tr=[0.0]*n; pdm=[0.0]*n; ndm=[0.0]*n
+    for i in range(1,n):
+        up=candles[i].high-candles[i-1].high; dn=candles[i-1].low-candles[i].low
+        pdm[i]=up if up>dn and up>0 else 0.0; ndm[i]=dn if dn>up and dn>0 else 0.0
+        tr[i]=max(candles[i].high-candles[i].low,abs(candles[i].high-candles[i-1].close),abs(candles[i].low-candles[i-1].close))
+    atr=_ema(tr,period); p=_ema(pdm,period); m=_ema(ndm,period)
+    pdi=[100*x/max(a,1e-12) for x,a in zip(p,atr)]; mdi=[100*x/max(a,1e-12) for x,a in zip(m,atr)]
+    dx=[100*abs(a-b)/max(a+b,1e-12) for a,b in zip(pdi,mdi)]
+    return _ema(dx,period),pdi,mdi
+
+
+def _rolling_vwap(candles: Sequence[Candle], period: int=20) -> List[float]:
+    out=[]
+    for i in range(len(candles)):
+        w=candles[max(0,i-period+1):i+1]; vol=sum(float(x.volume) for x in w)
+        out.append(candles[i].close if vol<=1e-12 else sum(((x.high+x.low+x.close)/3.0)*float(x.volume) for x in w)/vol)
+    return out
+
+
+def _force_index(candles: Sequence[Candle], period: int=13) -> List[float]:
+    raw=[0.0]
+    for i in range(1,len(candles)):
+        raw.append((candles[i].close-candles[i-1].close)*float(candles[i].volume))
+    return _ema(raw,period)
+
+
+def _supertrend_state(candles: Sequence[Candle], atr: Sequence[float], mult: float=3.0) -> List[int]:
+    out=[]; state=0
+    for i,c in enumerate(candles):
+        mid=(c.high+c.low)/2.0; a=atr[i]*mult
+        if c.close>mid+a*0.15: state=1
+        elif c.close<mid-a*0.15: state=-1
+        out.append(state)
+    return out
+
+
+
+def _ichimoku(candles: Sequence[Candle]):
+    tenkan=[]; kijun=[]; span_a=[]; span_b=[]
+    for i in range(len(candles)):
+        def mid(period):
+            w=candles[max(0,i-period+1):i+1]
+            return (max(x.high for x in w)+min(x.low for x in w))/2.0
+        t=mid(9); k=mid(26); b=mid(52)
+        tenkan.append(t); kijun.append(k); span_a.append((t+k)/2.0); span_b.append(b)
+    return tenkan,kijun,span_a,span_b
+
+
+def _rolling_poc(candles: Sequence[Candle], period: int=50, bins: int=12) -> List[float]:
+    out=[]
+    for i,c in enumerate(candles):
+        w=candles[max(0,i-period+1):i+1]
+        lo=min(x.low for x in w); hi=max(x.high for x in w)
+        if hi<=lo:
+            out.append(c.close); continue
+        bucket=[0.0]*bins
+        for x in w:
+            px=(x.high+x.low+x.close)/3.0
+            idx=min(bins-1,max(0,int((px-lo)/(hi-lo)*bins)))
+            bucket[idx]+=float(x.volume)
+        idx=max(range(bins),key=lambda j:bucket[j])
+        out.append(lo+(idx+0.5)*(hi-lo)/bins)
+    return out
+
+
+
+def _parabolic_sar(candles: Sequence[Candle], acceleration: float=0.02, maximum: float=0.2):
+    """Causal Parabolic SAR matching Main's manual implementation."""
+    n=len(candles)
+    if not n: return [], []
+    sar=[0.0]*n; ep=[0.0]*n; af=[0.0]*n; trend=[0]*n
+    sar[0]=float(candles[0].low); ep[0]=float(candles[0].high); af[0]=float(acceleration); trend[0]=1
+    for i in range(1,n):
+        if trend[i-1] == 1:
+            sar[i]=sar[i-1]+af[i-1]*(ep[i-1]-sar[i-1])
+            if candles[i].high>ep[i-1]: ep[i]=float(candles[i].high); af[i]=min(af[i-1]+acceleration,maximum)
+            else: ep[i]=ep[i-1]; af[i]=af[i-1]
+            if candles[i].low<sar[i]:
+                trend[i]=-1; sar[i]=ep[i-1]; ep[i]=float(candles[i].low); af[i]=acceleration
+            else: trend[i]=1
+        else:
+            sar[i]=sar[i-1]-af[i-1]*(sar[i-1]-ep[i-1])
+            if candles[i].low<ep[i-1]: ep[i]=float(candles[i].low); af[i]=min(af[i-1]+acceleration,maximum)
+            else: ep[i]=ep[i-1]; af[i]=af[i-1]
+            if candles[i].high>sar[i]:
+                trend[i]=1; sar[i]=ep[i-1]; ep[i]=float(candles[i].high); af[i]=acceleration
+            else: trend[i]=-1
+    return sar,trend
+
+
+def _rsi_maverick(closes: Sequence[float], length: int=20, bb_multiplier: float=2.0) -> List[float]:
+    """Main-compatible RSI Maverick: close position inside rolling volatility bands."""
+    basis=_rolling_mean(closes,max(5,int(length)))
+    dev=_rolling_std(closes,max(5,int(length)))
+    out=[]
+    for x,m,d in zip(closes,basis,dev):
+        upper=m+float(bb_multiplier)*d; lower=m-float(bb_multiplier)*d
+        out.append(0.5 if upper-lower<=1e-12 else (float(x)-lower)/(upper-lower))
+    return out
+
+
+def _rolling_volume_profile_nodes(candles: Sequence[Candle], period: int=50, bins: int=12):
+    """Causal OHLCV approximation of POC plus nearest HVN/LVN nodes.
+
+    It is intentionally labelled a proxy: candle volume is assigned to typical
+    price rather than pretending to have tick-by-price history.
+    """
+    pocs=[]; hvns=[]; lvns=[]
+    for i,c in enumerate(candles):
+        w=candles[max(0,i-period+1):i+1]
+        lo=min(x.low for x in w); hi=max(x.high for x in w)
+        if hi<=lo:
+            pocs.append(c.close); hvns.append(c.close); lvns.append(c.close); continue
+        bucket=[0.0]*bins
+        for x in w:
+            px=(x.high+x.low+x.close)/3.0
+            idx=min(bins-1,max(0,int((px-lo)/(hi-lo)*bins)))
+            bucket[idx]+=float(x.volume)
+        centers=[lo+(j+0.5)*(hi-lo)/bins for j in range(bins)]
+        avg=sum(bucket)/max(1,len(bucket))
+        poc_idx=max(range(bins),key=lambda j:bucket[j])
+        hvn_idx=[j for j,v in enumerate(bucket) if avg>0 and v>avg*1.5]
+        lvn_idx=[j for j,v in enumerate(bucket) if avg>0 and v<avg*0.5]
+        pocs.append(centers[poc_idx])
+        hvns.append(min((centers[j] for j in hvn_idx), key=lambda z:abs(z-c.close), default=centers[poc_idx]))
+        lvns.append(min((centers[j] for j in lvn_idx), key=lambda z:abs(z-c.close), default=centers[poc_idx]))
+    return pocs,hvns,lvns
+
+def _fvg_state(i: int, candles: Sequence[Candle], lookback: int=12):
+    bullish=[]; bearish=[]
+    a=max(2,i-lookback)
+    for k in range(a,i):
+        if candles[k].low>candles[k-2].high:
+            bullish.append((candles[k-2].high,candles[k].low))
+        if candles[k].high<candles[k-2].low:
+            bearish.append((candles[k].high,candles[k-2].low))
+    return bullish[-1] if bullish else None, bearish[-1] if bearish else None
+
+def _divergence_signal(i: int, candles: Sequence[Candle], osc: Sequence[float], lookback: int, mode: str):
+    lb=max(8,int(lookback)); a=max(1,i-lb); mid=max(a+2,i-lb//2)
+    old=range(a,mid); recent=range(mid,i)
+    if not list(old) or not list(recent): return False,False
+    old_lo=min(old,key=lambda k:candles[k].low); rec_lo=min(recent,key=lambda k:candles[k].low)
+    old_hi=max(old,key=lambda k:candles[k].high); rec_hi=max(recent,key=lambda k:candles[k].high)
+    regular_bull=candles[i].low<=candles[rec_lo].low and candles[rec_lo].low<candles[old_lo].low and osc[rec_lo]>osc[old_lo]
+    regular_bear=candles[i].high>=candles[rec_hi].high and candles[rec_hi].high>candles[old_hi].high and osc[rec_hi]<osc[old_hi]
+    hidden_bull=candles[rec_lo].low>candles[old_lo].low and osc[rec_lo]<osc[old_lo]
+    hidden_bear=candles[rec_hi].high<candles[old_hi].high and osc[rec_hi]>osc[old_hi]
+    if str(mode).upper()=='HIDDEN': return hidden_bull,hidden_bear
+    return regular_bull,regular_bear
+
 def features(candles: Sequence[Candle], spec: StrategySpec) -> Dict[str, List[float]]:
-    closes = [c.close for c in candles]
-    volumes = [c.volume for c in candles]
-    atr = _atr(candles, 14)
-    atr_pct = [float(a) / max(abs(float(c.close)), 1e-12) for a, c in zip(atr, candles)]
-    return {
-        "ema_fast": _ema(closes, spec.fast),
-        "ema_slow": _ema(closes, spec.slow),
-        "rsi": _rsi(closes, spec.rsi_len),
-        "atr": atr,
-        "atr_pct": atr_pct,
-        "atr_pct_ma": _rolling_mean(atr_pct, 100),
-        "volume_ma": _rolling_mean(volumes, 20),
+    """Compute only the causal features required by this declared strategy.
+
+    RC5 broadens the grammar substantially, so eagerly calculating volume
+    profile/Ichimoku/divergences for every RSI candidate would waste CPU/RAM.
+    """
+    closes=[c.close for c in candles]; volumes=[c.volume for c in candles]
+    atr=_atr(candles,14); atr_pct=[float(a)/max(abs(float(c.close)),1e-12) for a,c in zip(atr,candles)]
+    out={
+        "ema_fast":_ema(closes,spec.fast),"ema_slow":_ema(closes,spec.slow),
+        "rsi":_rsi(closes,spec.rsi_len),"atr":atr,"atr_pct":atr_pct,
+        "atr_pct_ma":_rolling_mean(atr_pct,100),"volume_ma":_rolling_mean(volumes,20),"volume":volumes,
     }
+    fam=str(spec.family or '').upper(); ind=str(spec.indicator or '').upper()
+    if fam in {"MACD_TREND","DIVERGENCE_REVERSAL","HIDDEN_DIVERGENCE_TREND"} and ind in {"MACD",""} or fam=="MACD_TREND":
+        macd,ms,mh=_macd(closes,12,26,max(5,int(spec.signal_period))); out.update(macd=macd,macd_signal=ms,macd_hist=mh)
+    if fam in {"STOCH_REVERSAL","DIVERGENCE_REVERSAL","HIDDEN_DIVERGENCE_TREND"} and (ind in {"STOCH","STOCHASTIC",""} or fam=="STOCH_REVERSAL"):
+        out["stoch"]=_stochastic(candles,max(7,int(spec.aux_period)))
+    if fam in {"CCI_WILLIAMS_REVERSAL","DIVERGENCE_REVERSAL","HIDDEN_DIVERGENCE_TREND"} and (ind in {"WILLIAMS","CCI","CCI_WILLIAMS",""} or fam=="CCI_WILLIAMS_REVERSAL"):
+        out["williams"]=_williams(candles,max(7,int(spec.aux_period))); out["cci"]=_cci(candles,max(10,int(spec.aux_period)))
+    if fam in {"MFI_REVERSAL","MFI_OBV_FLOW","DIVERGENCE_REVERSAL","HIDDEN_DIVERGENCE_TREND"} and (ind in {"MFI","MFI_OBV_FORCE",""} or fam in {"MFI_REVERSAL","MFI_OBV_FLOW"}):
+        out["mfi"]=_mfi(candles,max(7,int(spec.aux_period)))
+    if fam in {"MFI_OBV_FLOW","DIVERGENCE_REVERSAL","HIDDEN_DIVERGENCE_TREND"} and (ind in {"OBV","MFI_OBV_FORCE",""} or fam=="MFI_OBV_FLOW"):
+        obv=_obv(candles); out["obv"]=obv; out["obv_ma"]=_rolling_mean(obv,20)
+    if fam=="MFI_OBV_FLOW": out["force"]=_force_index(candles,13)
+    if fam=="ADX_DI_TREND":
+        adx,pdi,mdi=_adx_dmi(candles,max(7,int(spec.aux_period))); out.update(adx=adx,plus_di=pdi,minus_di=mdi)
+    if fam in {"BOLLINGER_REVERSION","BOLLINGER_SQUEEZE"}:
+        ma20=_rolling_mean(closes,20); sd20=_rolling_std(closes,20); out.update(bb_mid=ma20,bb_up=[m+float(spec.band_mult)*d for m,d in zip(ma20,sd20)],bb_low=[m-float(spec.band_mult)*d for m,d in zip(ma20,sd20)])
+    if fam=="VWAP_REVERSION": out["vwap"]=_rolling_vwap(candles,20)
+    if fam=="SUPERTREND_PULLBACK": out["supertrend"]=_supertrend_state(candles,atr,3.0)
+    if fam=="PSAR_TREND":
+        psar,psar_trend=_parabolic_sar(candles,0.02,0.2); out["psar"]=psar; out["psar_trend"]=psar_trend
+    if fam=="RSI_MAVERICK_REVERSAL" or (fam in {"DIVERGENCE_REVERSAL","HIDDEN_DIVERGENCE_TREND"} and ind=="RSI_MAVERICK"):
+        out["rsi_maverick"]=_rsi_maverick(closes,max(10,int(spec.aux_period or 20)),max(1.2,float(spec.band_mult or 2.0)))
+    if fam in {"DIVERGENCE_REVERSAL","HIDDEN_DIVERGENCE_TREND"} and ind=="FORCE_INDEX":
+        out["force"]=_force_index(candles,max(5,int(spec.aux_period or 13)))
+    if fam=="ICHIMOKU_TREND":
+        t,k,a,b=_ichimoku(candles); out.update(ichimoku_tenkan=t,ichimoku_kijun=k,ichimoku_span_a=a,ichimoku_span_b=b)
+    if fam in {"VOLUME_PROFILE_RETEST","VOLUME_PROFILE_NODE_REACTION"}:
+        poc,hvn,lvn=_rolling_volume_profile_nodes(candles,max(30,int(spec.lookback or 50)),12); out["poc"]=poc; out["hvn"]=hvn; out["lvn"]=lvn
+    if fam=="MULTI_RSI_TREND":
+        out["rsi_fast"]=_rsi(closes,7); out["rsi_slow"]=_rsi(closes,21)
+    return out
 
 
 def _regime(i: int, feat: Dict[str, List[float]], candles: Sequence[Candle]) -> str:
@@ -253,6 +509,96 @@ def _direction_signal(i: int, spec: StrategySpec, feat: Dict[str, List[float]], 
             direction = "LONG"
         elif regime == "TREND_DOWN" and c.close < prev.low and rsi <= spec.rsi_low and volume_ok:
             direction = "SHORT"
+
+    elif fam == "MACD_TREND":
+        if regime == "TREND_UP" and feat["macd"][i] > feat["macd_signal"][i] and feat["macd_hist"][i] > feat["macd_hist"][i-1]: direction="LONG"
+        elif regime == "TREND_DOWN" and feat["macd"][i] < feat["macd_signal"][i] and feat["macd_hist"][i] < feat["macd_hist"][i-1]: direction="SHORT"
+    elif fam == "ADX_DI_TREND":
+        if feat["adx"][i] >= spec.rsi_high and feat["plus_di"][i] > feat["minus_di"][i] and c.close>fast: direction="LONG"
+        elif feat["adx"][i] >= spec.rsi_high and feat["minus_di"][i] > feat["plus_di"][i] and c.close<fast: direction="SHORT"
+    elif fam == "STOCH_REVERSAL":
+        if regime=="BALANCE" and feat["stoch"][i] <= spec.rsi_low and c.close>prev.close: direction="LONG"
+        elif regime=="BALANCE" and feat["stoch"][i] >= spec.rsi_high and c.close<prev.close: direction="SHORT"
+    elif fam == "CCI_WILLIAMS_REVERSAL":
+        if regime=="BALANCE" and feat["cci"][i] <= -abs(spec.rsi_high) and feat["williams"][i] <= -80: direction="LONG"
+        elif regime=="BALANCE" and feat["cci"][i] >= abs(spec.rsi_high) and feat["williams"][i] >= -20: direction="SHORT"
+    elif fam == "MFI_REVERSAL":
+        if regime=="BALANCE" and feat["mfi"][i] <= spec.rsi_low and c.close>prev.close: direction="LONG"
+        elif regime=="BALANCE" and feat["mfi"][i] >= spec.rsi_high and c.close<prev.close: direction="SHORT"
+    elif fam == "BOLLINGER_REVERSION":
+        if regime=="BALANCE" and c.low <= feat["bb_low"][i] and c.close>feat["bb_low"][i]: direction="LONG"
+        elif regime=="BALANCE" and c.high >= feat["bb_up"][i] and c.close<feat["bb_up"][i]: direction="SHORT"
+    elif fam == "BOLLINGER_SQUEEZE":
+        width=(feat["bb_up"][i]-feat["bb_low"][i])/max(abs(c.close),1e-12)
+        prev_width=(feat["bb_up"][i-1]-feat["bb_low"][i-1])/max(abs(prev.close),1e-12)
+        if width>prev_width and c.close>feat["bb_up"][i-1] and volume_ok: direction="LONG"
+        elif width>prev_width and c.close<feat["bb_low"][i-1] and volume_ok: direction="SHORT"
+    elif fam == "VWAP_REVERSION":
+        vwap=feat["vwap"][i]
+        if regime=="BALANCE" and c.low < vwap-0.45*atr and c.close>=vwap: direction="LONG"
+        elif regime=="BALANCE" and c.high > vwap+0.45*atr and c.close<=vwap: direction="SHORT"
+    elif fam == "SUPERTREND_PULLBACK":
+        st=feat["supertrend"][i]
+        if st>0 and pullback_long and feat["rsi"][i]>=48: direction="LONG"
+        elif st<0 and pullback_short and feat["rsi"][i]<=52: direction="SHORT"
+    elif fam == "PSAR_TREND":
+        tr=feat["psar_trend"][i]
+        prev_tr=feat["psar_trend"][i-1]
+        if tr>0 and c.close>feat["psar"][i] and (prev_tr<0 or regime=="TREND_UP"): direction="LONG"
+        elif tr<0 and c.close<feat["psar"][i] and (prev_tr>0 or regime=="TREND_DOWN"): direction="SHORT"
+    elif fam == "RSI_MAVERICK_REVERSAL":
+        mv=feat["rsi_maverick"][i]; pmv=feat["rsi_maverick"][i-1]
+        if regime=="BALANCE" and pmv<=spec.rsi_low and mv>pmv and c.close>prev.close: direction="LONG"
+        elif regime=="BALANCE" and pmv>=spec.rsi_high and mv<pmv and c.close<prev.close: direction="SHORT"
+    elif fam == "MFI_OBV_FLOW":
+        obv_up=feat["obv"][i]>feat["obv_ma"][i]
+        if regime=="TREND_UP" and obv_up and feat["mfi"][i]>=55 and feat["force"][i]>0: direction="LONG"
+        elif regime=="TREND_DOWN" and not obv_up and feat["mfi"][i]<=45 and feat["force"][i]<0: direction="SHORT"
+    elif fam == "FIB_RETRACE_TREND":
+        rng=max(prior_high-prior_low,1e-12)
+        if regime=="TREND_UP":
+            retr=(prior_high-c.close)/rng
+            if 0.35<=retr<=0.66 and c.close>prev.close: direction="LONG"
+        elif regime=="TREND_DOWN":
+            retr=(c.close-prior_low)/rng
+            if 0.35<=retr<=0.66 and c.close<prev.close: direction="SHORT"
+    elif fam in {"DIVERGENCE_REVERSAL","HIDDEN_DIVERGENCE_TREND"}:
+        name=str(spec.indicator or "RSI").upper()
+        key={"RSI":"rsi","RSI_MAVERICK":"rsi_maverick","MACD":"macd_hist","STOCH":"stoch","STOCHASTIC":"stoch","MFI":"mfi","CCI":"cci","WILLIAMS":"williams","OBV":"obv","FORCE_INDEX":"force"}.get(name,"rsi")
+        osc=feat.get(key,feat["rsi"])
+        bull,bear=_divergence_signal(i,candles,osc,spec.lookback,"HIDDEN" if fam.startswith("HIDDEN") else "REGULAR")
+        if fam=="DIVERGENCE_REVERSAL":
+            if bull and regime in {"BALANCE","TREND_DOWN"}: direction="LONG"
+            elif bear and regime in {"BALANCE","TREND_UP"}: direction="SHORT"
+        else:
+            if bull and regime=="TREND_UP": direction="LONG"
+            elif bear and regime=="TREND_DOWN": direction="SHORT"
+    elif fam == "ICHIMOKU_TREND":
+        cloud_top=max(feat["ichimoku_span_a"][i],feat["ichimoku_span_b"][i]); cloud_bot=min(feat["ichimoku_span_a"][i],feat["ichimoku_span_b"][i])
+        if c.close>cloud_top and feat["ichimoku_tenkan"][i]>feat["ichimoku_kijun"][i]: direction="LONG"
+        elif c.close<cloud_bot and feat["ichimoku_tenkan"][i]<feat["ichimoku_kijun"][i]: direction="SHORT"
+    elif fam == "VOLUME_PROFILE_RETEST":
+        poc=feat["poc"][i]
+        if regime=="TREND_UP" and c.low<=poc<=c.high and c.close>poc and c.close>prev.close: direction="LONG"
+        elif regime=="TREND_DOWN" and c.low<=poc<=c.high and c.close<poc and c.close<prev.close: direction="SHORT"
+    elif fam == "VOLUME_PROFILE_NODE_REACTION":
+        hvn=feat["hvn"][i]; lvn=feat["lvn"][i]
+        near_hvn=abs(c.close-hvn)<=0.35*atr
+        lvn_break_up=prev.close<=lvn and c.close>lvn
+        lvn_break_down=prev.close>=lvn and c.close<lvn
+        if (regime=="TREND_UP" and near_hvn and c.close>hvn) or lvn_break_up: direction="LONG"
+        elif (regime=="TREND_DOWN" and near_hvn and c.close<hvn) or lvn_break_down: direction="SHORT"
+    elif fam == "FVG_RECLAIM":
+        bull_gap,bear_gap=_fvg_state(i,candles,spec.lookback)
+        if bull_gap and regime=="TREND_UP":
+            lo,hi=bull_gap
+            if c.low<=hi and c.close>=(lo+hi)/2: direction="LONG"
+        elif bear_gap and regime=="TREND_DOWN":
+            lo,hi=bear_gap
+            if c.high>=lo and c.close<=(lo+hi)/2: direction="SHORT"
+    elif fam == "MULTI_RSI_TREND":
+        if regime=="TREND_UP" and feat["rsi_fast"][i]>55 and feat["rsi"][i]>52 and feat["rsi_slow"][i]>50: direction="LONG"
+        elif regime=="TREND_DOWN" and feat["rsi_fast"][i]<45 and feat["rsi"][i]<48 and feat["rsi_slow"][i]<50: direction="SHORT"
 
     if spec.direction_mode in {"LONG", "SHORT"} and direction != spec.direction_mode:
         direction = None
