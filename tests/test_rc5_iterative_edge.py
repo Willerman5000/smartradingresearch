@@ -70,7 +70,7 @@ class RC5IterativeEdgeTests(unittest.TestCase):
         self.assertIn("{'SHADOW_READY','SHADOW_READY_FAST'}",block)
 
     def test_fast_search_cadence_until_all_shadow_ready(self):
-        self.assertEqual(config.BOOTSTRAP_FAST_MINUTES, 15)
+        self.assertEqual(config.BOOTSTRAP_FAST_MINUTES, 10)
         self.assertEqual(config.AUTO_INTERVAL_MINUTES, 180)
         text=(ROOT/'app.py').read_text(encoding='utf-8')
         block=text[text.index('def _bootstrap_status'):text.index('def _run_job')]

@@ -680,7 +680,7 @@ def _bootstrap_interval_minutes():
         minutes=int(getattr(config, 'BOOTSTRAP_BACKOFF_MINUTES', 60))
     else:
         mode='BOOTSTRAP_FAST'
-        minutes=int(getattr(config, 'BOOTSTRAP_FAST_MINUTES', 15))
+        minutes=int(getattr(config, 'BOOTSTRAP_FAST_MINUTES', 10))
     _state['bootstrap_mode']=mode
     return minutes, pending, mode
 
