@@ -6,6 +6,7 @@ from config import VERSION
 from db import utc_now
 from metrics import num
 from strategy_card import build_strategy_card
+from alpha_decay import classify_alpha_decay
 ENGINE="validation"
 
 
@@ -92,6 +93,27 @@ def analyze_findings(rows: List[Dict[str,Any]]) -> List[Dict[str,Any]]:
         causal_oos_promotable = (not is_causal) or causal_finalist_rank == 1
         strict_generated = bool(is_ai_proposal or is_factory_strategy or is_causal)
         cross_ok, cross_meta = _causal_cross_asset_ok(row, metrics, scope) if is_causal else (True,{"required":False})
+        # RC8: updated causal replay also watches the most recent eight trades.
+        # This is a continuity/promotion guard only; selection_score still cannot
+        # see Final OOS or these decay diagnostics.
+        backtest_decay = {}
+        if is_causal:
+            sel = metrics.get("selection_holdout") or {}
+            backtest_decay = classify_alpha_decay(
+                {
+                    "resolved_n": allm.get("resolved"),
+                    "recent8_n": allm.get("recent8_n"),
+                    "recent8_expectancy_r": allm.get("recent8_expectancy_r"),
+                    "recent8_profit_factor": allm.get("recent8_profit_factor"),
+                    "recent8_trade_sharpe": allm.get("recent8_trade_sharpe"),
+                    "previous8_n": allm.get("previous8_n"),
+                    "previous8_expectancy_r": allm.get("previous8_expectancy_r"),
+                    "previous8_trade_sharpe": allm.get("previous8_trade_sharpe"),
+                    "current_loss_streak": allm.get("current_loss_streak"),
+                },
+                baseline_expectancy_r=sel.get("expectancy_r"),
+                baseline_profit_factor=sel.get("profit_factor"),
+            )
 
         # Exchange-flow current context can inform future research but never enter
         # promotion without historical timestamps/replay.
@@ -107,15 +129,24 @@ def analyze_findings(rows: List[Dict[str,Any]]) -> List[Dict[str,Any]]:
                 penalty=min(0.08, 0.01*math.log2(max(2,budget)))
                 min_exp += penalty
                 min_pf += min(0.10, penalty)
-            if vn>=min_vn and vexp is not None and vexp<=-0.15:
+            if backtest_decay.get("degraded"):
+                stage="REJECTED_OOS"
+                reason=("Alpha decay en replay causal actualizado: la secuencia reciente del mismo especialista perdió continuidad "
+                        f"({backtest_decay.get('state')}). Se conserva la evidencia, pero no puede promover/continuar hasta un nuevo ciclo robusto.")
+            elif vn>=min_vn and vexp is not None and vexp<=-0.15:
                 stage="REJECTED_OOS"
                 reason="Replay causal: OOS final negativo; puede degradar/vetar la hipótesis, no promover."
             elif n>=min_n and vn>=min_vn and vexp is not None and vexp>min_exp and vpf is not None and vpf>min_pf and not pf_degenerate and stable and net_pct>=90 and runtime_trackable and cross_ok and causal_oos_promotable:
-                strong = n >= int(min_n*1.8) and vn >= int(min_vn*1.5) and vexp > max(0.18,min_exp+0.05) and vpf > max(1.25,min_pf+0.08) and positive_ratio is not None and positive_ratio >= 0.80
-                stage="SHADOW_READY_FAST" if strong else "SHADOW_READY"
-                reason=("Replay causal rentable en Discovery/selección y OOS final, walk-forward estable, costes modelados y contrato runtime reproducible. "
-                        "Aún requiere Shadow live antes de Canary.")
-                shadow_target,canary_target=_targets(scope,strong)
+                if backtest_decay.get("state") == "WATCH":
+                    stage="VALIDATION_REQUIRED"
+                    reason=("Edge histórico aprobado, pero la ventana causal más reciente de 8 trades muestra debilitamiento. "
+                            "No se elimina la estrategia ni se promueve todavía; requiere nueva evidencia antes de Shadow/continuidad.")
+                else:
+                    strong = n >= int(min_n*1.8) and vn >= int(min_vn*1.5) and vexp > max(0.18,min_exp+0.05) and vpf > max(1.25,min_pf+0.08) and positive_ratio is not None and positive_ratio >= 0.80
+                    stage="SHADOW_READY_FAST" if strong else "SHADOW_READY"
+                    reason=("Replay causal rentable en Discovery/selección y OOS final, walk-forward estable, costes modelados y contrato runtime reproducible. "
+                            "Aún requiere Shadow live antes de Canary.")
+                    shadow_target,canary_target=_targets(scope,strong)
             elif n>=max(6,min_n//3):
                 stage="VALIDATION_REQUIRED"
                 missing=[]
@@ -188,6 +219,7 @@ def analyze_findings(rows: List[Dict[str,Any]]) -> List[Dict[str,Any]]:
             "factory_strategy": is_factory_strategy,
             "causal_strategy": is_causal,
             "causal_cross_asset": cross_meta,
+            "backtest_alpha_decay_health": backtest_decay if is_causal else {},
             "generated_strategy_requires_strict_evidence": strict_generated,
             "ai_proposal_requires_strict_net_evidence": bool(is_ai_proposal),
             "symbol_timeframe_specialist": bool(is_causal and str(scope.get("symbol") or "ALL").upper() not in {"", "ALL"}),

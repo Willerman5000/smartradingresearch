@@ -20,6 +20,7 @@ from coverage_optimizer import (
 )
 from exchange_flow import current_exchange_flow_finding
 from historical_market import cache_stats as causal_cache_stats
+from alpha_decay import classify_alpha_decay
 
 app = Flask(__name__)
 central = RestDB(config.CENTRAL_URL, config.CENTRAL_KEY)
@@ -36,6 +37,12 @@ _state = {
     'bootstrap_prev_pending': None, 'bootstrap_stall_cycles': 0,
     'next_auto_interval_minutes': None,
 }
+
+# RC8: browser dashboards are read-only and must never hammer Supabase. A
+# small stale-while-revalidate cache keeps the operator page usable during a
+# 520/522 while Research itself remains fail-closed for authority.
+_DASHBOARD_CACHE = {'lock': threading.Lock(), 'rows': [], 'ts': 0.0, 'refreshing': False, 'error': None}
+_DASHBOARD_CACHE_TTL = max(60, int(os.getenv('DASHBOARD_CACHE_SECONDS', '180') or 180))
 
 
 def _auth_ok() -> bool:
@@ -348,11 +355,15 @@ def _explicitly_demoted_roots(rows):
     out=set()
     for row in rows or []:
         meta=(row or {}).get('meta') or {}
+        root=str(meta.get('champion_lineage_key') or meta.get('original_candidate_key') or _candidate_key(row) or '')
+        if bool(meta.get('champion_degraded')) and root:
+            out.add(root)
+            continue
         if str((row or {}).get('experiment') or '') not in _RETEST_EXPERIMENTS:
             continue
-        root=str(meta.get('original_candidate_key') or '')
-        if root and str((row or {}).get('stage') or '').upper()=='REJECTED_OOS':
-            out.add(root)
+        original=str(meta.get('original_candidate_key') or '')
+        if original and str((row or {}).get('stage') or '').upper()=='REJECTED_OOS':
+            out.add(original)
     return out
 
 
@@ -408,6 +419,75 @@ def _persistent_champions_by_cell(rows):
     return champions
 
 
+
+def _shadow_health_map():
+    """One compact Shadow-health read. Failure is neutral, never promotion."""
+    fields=(
+        'candidate_key,resolved_n,signals_n,expectancy_r,profit_factor,updated_at,'
+        'recent8_n,recent8_expectancy_r,recent8_profit_factor,recent8_trade_sharpe,'
+        'previous8_n,previous8_expectancy_r,previous8_trade_sharpe,current_loss_streak'
+    )
+    try:
+        rows=central.select('research_shadow_live_metrics_v1', params={
+            'select':fields, 'order':'updated_at.desc', 'limit':'600'
+        }, timeout=6, retries=0)
+    except Exception:
+        # Backward compatible before the RC8 SQL view is installed.
+        try:
+            rows=central.select('research_shadow_live_metrics_v1', params={
+                'select':'candidate_key,resolved_n,signals_n,expectancy_r,profit_factor,updated_at',
+                'order':'updated_at.desc','limit':'600'
+            }, timeout=5, retries=0)
+        except Exception:
+            return {}
+    out={}
+    for row in rows or []:
+        key=str(row.get('candidate_key') or '')
+        if key and key not in out:
+            out[key]=row
+    return out
+
+
+def _apply_alpha_decay_to_incumbents(rows, *, persist=False):
+    """Mark only an incumbent's own lineage as degraded.
+
+    New Challengers cannot demote it. A hard 8-loss streak or confirmed rolling
+    8-trade deterioration reopens the cell without deleting historical evidence.
+    """
+    rows=list(rows or [])
+    champions=_persistent_champions_by_cell(rows)
+    if not champions:
+        return rows
+    live_map=_shadow_health_map()
+    now=utc_now()
+    for cid,item in champions.items():
+        key=_candidate_key(item); root=_lineage_root(item)
+        live=live_map.get(key) or live_map.get(root) or {}
+        val=((item.get('metrics') or {}).get('validation') or {})
+        health=classify_alpha_decay(
+            live,
+            baseline_expectancy_r=val.get('expectancy_r'),
+            baseline_profit_factor=val.get('profit_factor'),
+        )
+        meta=dict(item.get('meta') or {})
+        previous=meta.get('alpha_decay_health') or {}
+        meta['alpha_decay_health']=health
+        if health.get('degraded'):
+            meta.update({
+                'champion_role':'DEGRADED',
+                'champion_degraded':True,
+                'champion_degraded_at':meta.get('champion_degraded_at') or now,
+                'champion_degraded_reason':health.get('state'),
+                'recycle_required':True,
+            })
+        item['meta']=meta
+        if persist and (previous != health or health.get('degraded')) and key:
+            try:
+                central.patch('research_promotions_v1', {'meta':meta}, filters={'candidate_key':f'eq.{key}'})
+            except Exception as exc:
+                print(f'⚠️ RC8 alpha-decay persist {cid}: {exc}', flush=True)
+    return rows
+
 def _best_causal_per_cell(rows):
     """One representative per cell, with RC8 persistent Champion semantics."""
     rows=list(rows or [])
@@ -425,29 +505,23 @@ def _best_causal_per_cell(rows):
     return out
 
 
-def _dashboard_rows():
-    """Small read-only payload for the browser. Never loads source trading rows."""
+def _load_dashboard_rows_uncached():
+    """Bounded DB read. Dashboard queries use a short timeout by design."""
     limit = int(getattr(config, 'DASHBOARD_MAX_ROWS', 120))
-    fetch_limit = min(1200 if config.ENGINE == 'validation' else 500, max(limit * (8 if config.ENGINE == 'validation' else 3), limit))
+    fetch_limit = min(700 if config.ENGINE == 'validation' else 300, max(limit * (5 if config.ENGINE == 'validation' else 2), limit))
     if config.ENGINE == 'validation':
         raw = central.select('research_promotions_v1', params={
             'select': 'candidate_key,source_engine,experiment,stage,reason,scope,metrics,meta,research_version,updated_at',
-            'research_version': f'eq.{config.VERSION}',
-            'order': 'updated_at.desc',
-            'limit': str(fetch_limit),
-        })
+            'research_version': f'eq.{config.VERSION}', 'order': 'updated_at.desc', 'limit': str(fetch_limit),
+        }, timeout=6, retries=0)
     else:
         raw = central.select('research_findings_v1', params={
             'select': 'feature_key,engine,experiment,stage,scope,metrics,meta,research_version,updated_at',
-            'engine': f'eq.{config.ENGINE}',
-            'research_version': f'eq.{config.VERSION}',
-            'order': 'updated_at.desc',
-            'limit': str(fetch_limit),
-        })
+            'engine': f'eq.{config.ENGINE}', 'research_version': f'eq.{config.VERSION}',
+            'order': 'updated_at.desc', 'limit': str(fetch_limit),
+        }, timeout=6, retries=0)
     current = [r for r in raw if (r.get('meta') or {}).get('is_current') is True and str(r.get('stage') or '') != 'STALE']
     if config.ENGINE == 'validation':
-        # I.2: show one representative for each of the 46 symbol×TF cells,
-        # while keeping all pre-declared finalists persisted for Validation.
         causal_all=[r for r in current if str(r.get('experiment') or '') in {'CAUSAL_COVERAGE_STRATEGY','CAUSAL_REGISTRY_RETEST','CAUSAL_SHADOW_RECYCLE'}]
         causal=_best_causal_per_cell(causal_all)
         rest=[r for r in current if r not in causal_all and _row_in_active_contract(r)]
@@ -455,6 +529,43 @@ def _dashboard_rows():
         remaining=max(0, limit-len(causal))
         return causal[:limit] + balanced_current_rows(rest, remaining)
     return balanced_current_rows(current, limit)
+
+
+def _dashboard_refresh_async():
+    with _DASHBOARD_CACHE['lock']:
+        if _DASHBOARD_CACHE['refreshing']:
+            return
+        _DASHBOARD_CACHE['refreshing']=True
+    def worker():
+        try:
+            rows=_load_dashboard_rows_uncached()
+            with _DASHBOARD_CACHE['lock']:
+                _DASHBOARD_CACHE.update(rows=list(rows), ts=time.monotonic(), error=None)
+        except Exception as exc:
+            with _DASHBOARD_CACHE['lock']:
+                _DASHBOARD_CACHE['error']=f'{type(exc).__name__}: {str(exc)[:180]}'
+        finally:
+            with _DASHBOARD_CACHE['lock']:
+                _DASHBOARD_CACHE['refreshing']=False
+    threading.Thread(target=worker, daemon=True, name=f'dashboard-refresh-{config.ENGINE}').start()
+
+
+def _dashboard_rows():
+    """Stale-while-revalidate: browser never causes a long Supabase wait."""
+    now=time.monotonic()
+    with _DASHBOARD_CACHE['lock']:
+        rows=list(_DASHBOARD_CACHE['rows'])
+        age=(now-float(_DASHBOARD_CACHE['ts'] or 0.0)) if _DASHBOARD_CACHE['ts'] else None
+    if rows and age is not None and age < _DASHBOARD_CACHE_TTL:
+        return rows
+    if rows:
+        _dashboard_refresh_async()
+        return rows
+    # Cold start: one bounded 6s attempt, then fail with JSON (never HTML/502 storm).
+    fresh=_load_dashboard_rows_uncached()
+    with _DASHBOARD_CACHE['lock']:
+        _DASHBOARD_CACHE.update(rows=list(fresh), ts=now, error=None)
+    return fresh
 
 
 def _compact_metric(row):
@@ -596,6 +707,7 @@ def _run_validation(run_id: str):
     except Exception as exc:
         print(f'⚠️ RC8 champion snapshot: {exc}', flush=True)
         old=[]
+    old=_apply_alpha_decay_to_incumbents(old, persist=True)
     incumbents=_persistent_champions_by_cell(old)
 
     promotions = _engine.analyze_findings(rows)
@@ -710,10 +822,18 @@ def _causal_retest_promotions_for_engine(engine: str):
             'limit':str(limit),
         })
         try:
-            shadow=central.select('research_shadow_live_metrics_v1', params={
-                'select':'candidate_key,resolved_n,signals_n,expectancy_r,profit_factor,updated_at',
-                'order':'updated_at.desc','limit':'500',
-            })
+            try:
+                shadow=central.select('research_shadow_live_metrics_v1', params={
+                    'select':('candidate_key,resolved_n,signals_n,expectancy_r,profit_factor,updated_at,'
+                              'recent8_n,recent8_expectancy_r,recent8_profit_factor,recent8_trade_sharpe,'
+                              'previous8_n,previous8_expectancy_r,previous8_trade_sharpe,current_loss_streak'),
+                    'order':'updated_at.desc','limit':'500',
+                }, timeout=6, retries=0)
+            except Exception:
+                shadow=central.select('research_shadow_live_metrics_v1', params={
+                    'select':'candidate_key,resolved_n,signals_n,expectancy_r,profit_factor,updated_at',
+                    'order':'updated_at.desc','limit':'500',
+                }, timeout=5, retries=0)
         except Exception:
             shadow=[]
         smap={}
@@ -729,10 +849,18 @@ def _causal_retest_promotions_for_engine(engine: str):
             resolved=int(live.get('resolved_n') or 0)
             exp=live.get('expectancy_r'); pf=live.get('profit_factor')
             priority=0
+            val=((row.get('metrics') or {}).get('validation') or {})
+            decay=classify_alpha_decay(
+                live,
+                baseline_expectancy_r=val.get('expectancy_r'),
+                baseline_profit_factor=val.get('profit_factor'),
+            )
             try:
-                if resolved>=target and (exp is None or float(exp)<=0.05 or (pf is not None and float(pf)<1.05)):
+                if decay.get('degraded'):
+                    priority=4
+                elif resolved>=target and (exp is None or float(exp)<=0.05 or (pf is not None and float(pf)<1.05)):
                     priority=3
-                elif resolved>=max(3,target//2) and exp is not None and float(exp)<=-0.20:
+                elif decay.get('state')=='WATCH' or (resolved>=max(3,target//2) and exp is not None and float(exp)<=-0.20):
                     priority=2
                 elif resolved>0:
                     priority=1
@@ -740,6 +868,7 @@ def _causal_retest_promotions_for_engine(engine: str):
                 priority=0
             meta['shadow_recycle_priority']=priority
             meta['shadow_live_snapshot']=live
+            meta['alpha_decay_health']=decay
             row=dict(row); row['meta']=meta
             enriched.append(row)
         enriched.sort(key=lambda r:(int((r.get('meta') or {}).get('shadow_recycle_priority') or 0), str(r.get('updated_at') or '')), reverse=True)
@@ -989,7 +1118,11 @@ def dashboard_api():
             'last_run': {k:_state.get(k) for k in ('last_started_at','last_finished_at','last_error','last_source_rows','last_findings','last_source_coverage','last_ai_proposals','last_causal_cells','last_causal_profitable','bootstrap_pending','bootstrap_mode','next_auto_interval_minutes')},
         })
     except Exception as exc:
-        return jsonify({'ok':False,'engine':config.ENGINE,'error':str(exc)[:240]}), 500
+        # Operational dashboard failure is not a Research-engine crash. 503 JSON
+        # lets the browser retry safely instead of parsing a Render/Cloudflare HTML page.
+        return jsonify({'ok':False,'engine':config.ENGINE,'deferred':True,
+                        'error':f'{type(exc).__name__}: {str(exc)[:200]}',
+                        'retry_after_seconds':15}), 503
 
 
 @app.get('/api/export/summary')

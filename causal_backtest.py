@@ -897,11 +897,45 @@ def _drawdown(rs: Iterable[float]) -> float:
     return dd
 
 
+def _window_health(values: Sequence[float]) -> Dict[str, Any]:
+    vals = [float(x) for x in values]
+    pos = sum(x for x in vals if x > 0)
+    neg = abs(sum(x for x in vals if x < 0))
+    pf = pos / neg if neg > 1e-12 else None
+    sharpe = None
+    if len(vals) >= 3:
+        mean = sum(vals) / len(vals)
+        var = sum((x - mean) ** 2 for x in vals) / (len(vals) - 1)
+        std = math.sqrt(max(0.0, var))
+        if std > 1e-12:
+            # Per-trade health ratio, deliberately NOT annualized. Mixing TFs or
+            # pretending eight observations are an annual Sharpe would overstate precision.
+            sharpe = mean / std
+    return {
+        "n": len(vals),
+        "expectancy_r": round(sum(vals) / len(vals), 5) if vals else None,
+        "profit_factor": round(pf, 4) if pf is not None else None,
+        "trade_sharpe": round(sharpe, 4) if sharpe is not None else None,
+    }
+
+
+def _current_loss_streak(values: Sequence[float]) -> int:
+    streak = 0
+    for value in reversed([float(x) for x in values]):
+        if value < 0:
+            streak += 1
+        else:
+            break
+    return streak
+
+
 def summarize_trades(trades: Sequence[Trade]) -> Dict[str, Any]:
     rs = [float(t.r_net) for t in trades]
     wins = sum(1 for x in rs if x > 0); losses = sum(1 for x in rs if x < 0)
     pos = sum(x for x in rs if x > 0); neg = abs(sum(x for x in rs if x < 0))
     pf = pos / neg if neg > 1e-12 else None
+    recent8 = _window_health(rs[-8:])
+    previous8 = _window_health(rs[-16:-8]) if len(rs) > 8 else _window_health([])
     symbols: Dict[str, List[float]] = {}
     for t in trades:
         symbols.setdefault(t.symbol, []).append(t.r_net)
@@ -960,6 +994,17 @@ def summarize_trades(trades: Sequence[Trade]) -> Dict[str, Any]:
         "symbols": sorted(symbols), "by_symbol": by_symbol,
         "net_evidence_count": len(trades), "net_evidence_pct": 100.0 if trades else 0.0,
         "cost_model": "MODELED_FEES_SLIPPAGE_AND_FUNDING_STRESS",
+        # RC8 alpha-decay diagnostics use the most recent chronological trades
+        # of THIS exact strategy/cell. They are promotion/continuity guards,
+        # never candidate-ranking inputs.
+        "recent8_n": recent8["n"],
+        "recent8_expectancy_r": recent8["expectancy_r"],
+        "recent8_profit_factor": recent8["profit_factor"],
+        "recent8_trade_sharpe": recent8["trade_sharpe"],
+        "previous8_n": previous8["n"],
+        "previous8_expectancy_r": previous8["expectancy_r"],
+        "previous8_trade_sharpe": previous8["trade_sharpe"],
+        "current_loss_streak": _current_loss_streak(rs),
         "guardian_operational_replay": guardian_overlay,
         "entry_execution_audit": entry_execution_audit,
     }
