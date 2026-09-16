@@ -13,8 +13,8 @@ class RC41ResearchTests(unittest.TestCase):
         self.assertEqual(historical_market._FUTURES_GRANULARITY['1D'], 1440)
 
     def test_contract_remains_46_cells(self):
-        self.assertEqual(config.CAUSAL_REQUIRED_CELLS, 46)
-        self.assertEqual(config.VERSION, 'RFV1_12_RC5_ITERATIVE_EDGE_46CELL_20260915')
+        self.assertEqual(config.CAUSAL_REQUIRED_CELLS, 92)
+        self.assertEqual(config.VERSION, 'RFV1_13_RC8_1_ACTION_EDGE_92CELL_20260916')
         self.assertEqual(config.RELEASE_LABEL, 'V1 · ITERATIVE EDGE')
 
     def test_report_source_contains_active_contract_filter(self):

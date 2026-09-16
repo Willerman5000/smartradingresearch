@@ -33,5 +33,6 @@ def test_only_explicit_retest_rejection_demotes_lineage():
 
 def test_bootstrap_counts_persistent_champions_not_latest_challenger():
     b=block('def _bootstrap_status', 'def _bootstrap_interval_minutes')
-    assert '_persistent_champions_by_cell(rows)' in b
+    assert '_canonical_champion_cells' in b
+    assert 'research_champions_v1' in SRC
     assert 'expected_ids-complete' in b

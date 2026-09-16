@@ -5,7 +5,7 @@ ROOT=Path(__file__).resolve().parent
 def test_contract_is_46_cells_without_5m_15m():
     cfg=(ROOT/'config.py').read_text(encoding='utf-8')
     cov=(ROOT/'coverage_optimizer.py').read_text(encoding='utf-8')
-    assert 'CAUSAL_REQUIRED_CELLS = 46' in cfg
+    assert 'CAUSAL_REQUIRED_CELLS = 92' in cfg
     assert 'FUTURES_CORE_TFS = ("30M", "1H", "2H", "4H")' in cov
     assert '_future_cells(("5M", "15M"))' not in cov
 
@@ -20,4 +20,4 @@ def test_workers_keep_all_active_v1_cells():
 
 def test_version_marks_rc2():
     cfg=(ROOT/'config.py').read_text(encoding='utf-8')
-    assert 'RFV1_12_RC5_ITERATIVE_EDGE_46CELL_20260915' in cfg
+    assert 'RFV1_13_RC8_1_ACTION_EDGE_92CELL_20260916' in cfg

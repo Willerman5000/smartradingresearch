@@ -37,14 +37,14 @@ def test_causal_replay_produces_net_metrics_without_lookahead():
 
 def test_final_v1_lanes_cover_all_46_symbol_tf_cells_once():
     cells=[cell for engine,cells in LANES.items() for cell in cells]
-    assert len(cells) == 46
-    assert len(set(cells)) == 46
+    assert len(cells) == 92
+    assert len(set(cells)) == 92
     futures=[x for x in cells if x[0]=='futures']
     spot=[x for x in cells if x[0]=='spot']
     assert {x[3] for x in futures} == {'30M','1H','2H','4H','12H','1D'}
-    assert len(futures) == 34
+    assert len(futures) == 68
     assert {x[2] for x in futures} == {'BTC-USDT','ETH-USDT','SOL-USDT','XRP-USDT','ADA-USDT','LINK-USDT','BNB-USDT'}
-    assert len(spot) == 12
+    assert len(spot) == 24
     assert {x[2] for x in spot} == {'BTC-USDT','PAXG-USDT','PAXG-BTC'}
 
 

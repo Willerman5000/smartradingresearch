@@ -6,12 +6,12 @@ from full_stack_certification import build_full_stack_certification
 
 def test_rc4_contract_has_46_independent_cells():
     cells = all_coverage_cells()
-    assert len(cells) == 46
-    assert len(set(cells)) == 46
+    assert len(cells) == 92
+    assert len(set(cells)) == 92
     high = [c for c in cells if c[3] in {'12H','1D'} and c[0] == 'futures']
-    assert len(high) == 6
+    assert len(high) == 12
     assert {c[2] for c in high} == set(FUTURES_HIGH_TF_SYMBOLS)
-    assert Counter(c[3] for c in high) == {'12H':3,'1D':3}
+    assert Counter(c[3] for c in high) == {'12H':6,'1D':6}
 
 
 def test_entry_wick_audit_is_visible_without_rewriting_pnl():

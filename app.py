@@ -51,6 +51,8 @@ _DASHBOARD_CACHE_TTL = max(300, int(os.getenv('DASHBOARD_CACHE_SECONDS', '900') 
 # si realmente apareció una señal/resultado nuevo.
 _SOURCE_CACHE = {'lock': threading.Lock(), 'rows': [], 'ts': 0.0, 'watermark': None, 'error': None}
 _VALIDATION_WATERMARK = {'lock': threading.Lock(), 'value': None}
+_CANDIDATE_MEMORY_CACHE = {'lock': threading.Lock(), 'ts': 0.0, 'blocked': {}}
+_CANDIDATE_MEMORY_TTL = max(1800, int(os.getenv('CANDIDATE_MEMORY_CACHE_SECONDS', '21600') or 21600))
 
 
 def _auth_ok() -> bool:
@@ -459,7 +461,7 @@ def _champion_score(row):
 
 
 def _persistent_champions_by_cell(rows):
-    """Return one persistent incumbent per market×symbol×TF cell.
+    """Return one persistent incumbent per market×symbol×TF×action cell.
 
     RC8 policy:
     - first non-degraded SHADOW_READY lineage fills an empty cell;
@@ -496,6 +498,66 @@ def _persistent_champions_by_cell(rows):
         champions[cid]=max(lineage_rows, key=lambda r:(str(r.get('updated_at') or ''), _champion_score(r)))
     return champions
 
+
+
+def _canonical_champion_promotions(engine: str | None = None):
+    """Return the Knowledge-Core Champions in legacy promotion shape.
+
+    RC8.1 keeps the validated incumbent independent of the current Research
+    generation/version.  This prevents a version bump or compacted laboratory
+    from making an already-filled action cell look empty.
+    """
+    params={
+        'select':('cell_key,research_version,system_type,market_family,symbol,timeframe,action,direction,regime,'
+                  'candidate_key,source_engine,experiment,strategy_id,strategy_family,strategy_fingerprint,'
+                  'strategy_spec,strategy_card,oos_n,oos_wr_pct,oos_expectancy_r,oos_profit_factor,oos_max_drawdown_r,'
+                  'alpha_state,alpha_detail,status,champion_since,last_validated_at,updated_at,shadow_target,canary_target,'
+                  'runtime_trackable,evidence'),
+        'status':'neq.DEGRADED','order':'updated_at.desc','limit':'120',
+    }
+    owner=str(engine or '').lower()
+    if owner and owner!='validation':
+        params['source_engine']=f'eq.{owner}'
+    rows=central.select('research_champions_v1', params=params, timeout=5, retries=0)
+    out=[]
+    for c in rows or []:
+        evidence=dict(c.get('evidence') or {})
+        validation=dict(evidence.get('validation') or {})
+        validation.update({
+            'resolved':int(c.get('oos_n') or validation.get('resolved') or 0),
+            'win_rate_pct':c.get('oos_wr_pct') if c.get('oos_wr_pct') is not None else validation.get('win_rate_pct'),
+            'expectancy_r':c.get('oos_expectancy_r') if c.get('oos_expectancy_r') is not None else validation.get('expectancy_r'),
+            'profit_factor':c.get('oos_profit_factor') if c.get('oos_profit_factor') is not None else validation.get('profit_factor'),
+            'max_drawdown_r':c.get('oos_max_drawdown_r') if c.get('oos_max_drawdown_r') is not None else validation.get('max_drawdown_r'),
+        })
+        system=str(c.get('system_type') or ('FUTURES' if c.get('market_family')=='CRYPTO_FUTURES' else 'SPOT')).lower()
+        action=str(c.get('action') or '').upper()
+        direction=str(c.get('direction') or '').upper()
+        if not action:
+            action=('COMPRA_SPOT' if direction=='LONG' else 'VENTA_SPOT') if system=='spot' else direction
+        scope={'market_family':c.get('market_family'),'symbol':c.get('symbol'),'timeframe':c.get('timeframe'),
+               'action':action,'direction':direction or ('LONG' if action=='COMPRA_SPOT' else 'SHORT' if action=='VENTA_SPOT' else action),
+               'regime':c.get('regime') or 'ALL'}
+        alpha=dict(c.get('alpha_detail') or {}); alpha['state']=c.get('alpha_state') or alpha.get('state') or 'HEALTHY'
+        out.append({
+            'candidate_key':c.get('candidate_key'),'source_engine':c.get('source_engine'),'experiment':c.get('experiment') or 'CAUSAL_COVERAGE_STRATEGY',
+            'stage':'SHADOW_READY','authority':'RESEARCH_ONLY','reason':'Champion canónico persistente','scope':scope,
+            'metrics':{'all':evidence.get('all') or {},'validation':validation,'walk_forward':evidence.get('walk_forward') or {}},
+            'meta':{'is_current':True,'causal_strategy':True,'causal_candle_replay':True,
+                    'coverage_cell':{'system_type':system,'market_family':c.get('market_family'),'symbol':c.get('symbol'),'timeframe':c.get('timeframe'),'action':action},
+                    'coverage_cell_id':_knowledge_cell_to_coverage_id(c),'coverage_owner_engine':c.get('source_engine'),
+                    'coverage_status':'SHADOW_READY','coverage_target_mode':'ONE_VALIDATED_SPECIALIST_PER_MARKET_SYMBOL_TIMEFRAME_ACTION',
+                    'causal_strategy_id':c.get('strategy_id'),'causal_strategy_family':c.get('strategy_family'),
+                    'causal_strategy_spec':c.get('strategy_spec') or {},'strategy_card':c.get('strategy_card') or {},
+                    'champion_role':'INCUMBENT','champion_lineage_key':c.get('candidate_key'),'champion_since':c.get('champion_since'),
+                    'recommended_shadow_target':int(c.get('shadow_target') or 0),'recommended_canary_target':int(c.get('canary_target') or 0),
+                    'runtime_trackable':bool(c.get('runtime_trackable',True)),'alpha_decay_health':alpha,
+                    'guardian_operational_replay':evidence.get('guardian_operational_replay') or {},
+                    'full_stack_profitability_certification':evidence.get('full_stack_profitability_certification') or {},
+                    'walk_forward_positive_ratio':evidence.get('walk_forward_positive_ratio')},
+            'research_version':c.get('research_version'),'updated_at':c.get('updated_at'),
+        })
+    return out
 
 
 def _shadow_health_map():
@@ -586,7 +648,7 @@ def _best_causal_per_cell(rows):
 def _load_dashboard_rows_uncached():
     """Compact observability read designed for Supabase Free egress.
 
-    Validation needs the 46 causal cells plus a small diagnostic tail, not
+    Validation needs the 92 action-specific causal cells plus a small diagnostic tail, not
     hundreds of historical challenger JSON payloads. Evidence engines need only
     their newest current rows. This endpoint never grants authority.
     """
@@ -606,7 +668,11 @@ def _load_dashboard_rows_uncached():
             r for r in causal_raw
             if (r.get('meta') or {}).get('is_current') is not False
         ]
-        causal = _best_causal_per_cell(causal_current)
+        try:
+            canonical = _canonical_champion_promotions(None)
+        except Exception:
+            canonical = []
+        causal = _best_causal_per_cell(canonical + causal_current)
         causal.sort(key=lambda r: str(((r.get('meta') or {}).get('coverage_cell_id') or '')))
 
         # Keep a small tail of non-causal diagnostics for transparency. This is
@@ -737,13 +803,13 @@ def _markdown_report(items):
     causal_all=[x for x in items if str(x.get('experiment') or '') in {'CAUSAL_COVERAGE_STRATEGY','CAUSAL_REGISTRY_RETEST','CAUSAL_SHADOW_RECYCLE'}]
     causal=_best_causal_per_cell(causal_all)
     if causal:
-        required=int(getattr(config,'CAUSAL_REQUIRED_CELLS',46))
+        required=int(getattr(config,'CAUSAL_REQUIRED_CELLS',92))
         selection_positive=sum(1 for x in causal if str((x.get('meta') or {}).get('coverage_status') or '')=='SELECTION_PROFITABLE')
         oos_positive=sum(1 for x in causal if x.get('validation_expectancy_r') is not None and float(x.get('validation_expectancy_r') or 0)>0 and (x.get('validation_profit_factor') is None or float(x.get('validation_profit_factor') or 0)>1.0))
         shadow_ready=sum(1 for x in causal if str(x.get('stage') or '') in {'SHADOW_READY','SHADOW_READY_FAST'})
         lines += [
             f'## {getattr(config, "RELEASE_LABEL", "FINAL V1 RC4")} · Cobertura especialista de rentabilidad',
-            f'- Celdas símbolo×temporalidad visibles: {len(causal)}/{required}',
+            f'- Celdas mercado×par×temporalidad×acción visibles: {len(causal)}/{required}',
             f'- Celdas con Selection positiva: {selection_positive}',
             f'- Celdas con OOS final positivo: {oos_positive}',
             f'- Celdas con Champion persistente SHADOW_READY: {shadow_ready}',
@@ -755,7 +821,7 @@ def _markdown_report(items):
         ]
         for it in sorted(causal, key=lambda x: str((x.get('meta') or {}).get('coverage_cell_id') or '')):
             meta=it.get('meta') or {}; cell=meta.get('coverage_cell') or {}
-            lines.append(f"- {it.get('stage')} | {cell.get('market_family')} {cell.get('symbol')} {cell.get('timeframe')} | {meta.get('causal_strategy_family')} | N={it.get('resolved')} | OOS.N={it.get('validation_n')} | OOS.Exp.R={it.get('validation_expectancy_r')} | OOS.PF={it.get('validation_profit_factor')}")
+            lines.append(f"- {it.get('stage')} | {cell.get('market_family')} {cell.get('symbol')} {cell.get('timeframe')} {cell.get('action') or (it.get('scope') or {}).get('action') or '--'} | {meta.get('causal_strategy_family')} | N={it.get('resolved')} | OOS.N={it.get('validation_n')} | OOS.Exp.R={it.get('validation_expectancy_r')} | OOS.PF={it.get('validation_profit_factor')}")
         lines.append('')
     active_items=[x for x in items if _row_in_active_contract(x)]
     legacy_hidden=max(0, len(items)-len(active_items))
@@ -773,23 +839,23 @@ def _markdown_report(items):
 
 
 def _current_causal_cell_ids():
-    """Tiny coverage read used by Validation rescue.
-
-    Only active causal rows are relevant; downloading historical/stale findings
-    here was one of the largest avoidable Free-plan egress costs.
-    """
+    """Coverage visible to Validation = canonical Champions + current finalists."""
+    try:
+        out=set(_canonical_champion_cells(None))
+    except Exception:
+        out=set()
     try:
         rows=central.paged_select('research_findings_v1', params={
             'select':'feature_key,engine,experiment,meta,research_version,stage,updated_at',
             'research_version':f'eq.{config.VERSION}',
             'experiment':'in.(CAUSAL_COVERAGE_STRATEGY,CAUSAL_REGISTRY_RETEST,CAUSAL_SHADOW_RECYCLE)',
-            'stage':'neq.STALE',
-            'order':'updated_at.desc',
-        }, max_rows=280, page_size=140)
+            'stage':'neq.STALE','order':'updated_at.desc',
+        }, max_rows=280,page_size=140)
     except Exception as exc:
-        print(f'⚠️ causal coverage unavailable: {exc}', flush=True)
+        if out:
+            return out
+        print(f'⚠️ causal coverage unavailable: {exc}',flush=True)
         return None
-    out=set()
     for row in rows or []:
         meta=row.get('meta') or {}
         if meta.get('is_current') is False:
@@ -801,16 +867,16 @@ def _current_causal_cell_ids():
 
 
 def _rescue_missing_causal_cells(run_id: str):
-    """Validation is the fifth research instance: fill missing 46-cell specialists.
+    """Validation is the fifth research instance: fill missing 92 action-specific specialists.
 
     Owners remain execution/risk/strategy/traders. Rescue computes only missing
-    symbol×TF cells and persists all pre-declared finalists.
+    market×symbol×TF×action cells and persists all pre-declared finalists.
     """
     if not bool(getattr(config,'CAUSAL_VALIDATION_RESCUE',True)):
         return 0
     present=_current_causal_cell_ids()
     if present is None:
-        # Never interpret a database outage as 0/46 coverage.
+        # Never interpret a database outage as 0/92 action-cell coverage.
         print('⚠️ [I.2 VALIDATION] rescate omitido: cobertura actual no legible por infraestructura', flush=True)
         return 0
     missing=[cell for cell in all_coverage_cells() if coverage_cell_id(cell) not in present]
@@ -818,13 +884,14 @@ def _rescue_missing_causal_cells(run_id: str):
     missing=missing[:cap]
     if not missing:
         return 0
-    print(f'🧯 [I.2 VALIDATION] rescate causal faltantes={len(missing)} presentes={len(present)}/{getattr(config, "CAUSAL_REQUIRED_CELLS", 46)}', flush=True)
+    print(f'🧯 [I.2 VALIDATION] rescate causal faltantes={len(missing)} presentes={len(present)}/{getattr(config, "CAUSAL_REQUIRED_CELLS", 92)}', flush=True)
     done=0
+    blocked_map=_blocked_candidate_strategy_ids()
     for cell in missing:
         if rss_mb() >= getattr(config,'MEMORY_HARD_MB',430):
             break
         owner=owner_for_cell(cell)
-        findings=optimize_cell_candidates(cell, owner_engine=owner)
+        findings=optimize_cell_candidates(cell, owner_engine=owner, blocked_strategy_ids=blocked_map.get(coverage_cell_id(cell), set()))
         _upsert_findings(findings, run_id, f'validation-rescue:{coverage_cell_id(cell)}')
         done += 1
     return done
@@ -847,7 +914,7 @@ def _validation_input_watermark() -> str:
 def _run_validation(run_id: str):
     """Validate challengers without erasing an already proven cell Champion.
 
-    RC8 post-audit contract: a market×symbol×TF cell accumulates a persistent
+    RC8 post-audit contract: a market×symbol×TF×action cell accumulates a persistent
     incumbent. New generations are Challengers. The cell becomes unfilled only
     after explicit negative evidence on the incumbent lineage itself.
     """
@@ -875,7 +942,7 @@ def _run_validation(run_id: str):
     rows=[r for r in raw if (r.get('meta') or {}).get('is_current') is True]
 
     # Snapshot incumbents/current challengers BEFORE analyzing the new batch.
-    # 800 bounded rows are enough for the 46 active cells and avoid the former
+    # 800 bounded rows are enough for the 92 active action cells and avoid the former
     # 5,000-row JSON transfer on every Validation cycle.
     try:
         old = central.paged_select('research_promotions_v1', params={
@@ -884,6 +951,8 @@ def _run_validation(run_id: str):
             'stage':'neq.STALE',
             'order':'updated_at.desc',
         }, max_rows=800, page_size=200)
+        # Incumbents live in the canonical core and survive Research version bumps.
+        old = _canonical_champion_promotions(None) + list(old or [])
     except Exception as exc:
         print(f'⚠️ RC8 champion snapshot: {exc}', flush=True)
         old=[]
@@ -1061,24 +1130,95 @@ def _causal_retest_promotions_for_engine(engine: str):
         return []
 
 
-def _priority_cells_for_engine(engine: str):
-    """Prioritize only genuinely unfilled/degraded cells, never healthy Champions.
+def _knowledge_cell_to_coverage_id(row):
+    """Translate Knowledge Core to market×family×symbol×TF×action identity."""
+    fam=str((row or {}).get('market_family') or '').upper()
+    sym=str((row or {}).get('symbol') or '').upper().replace('/','-')
+    tf=str((row or {}).get('timeframe') or '').upper()
+    system=str((row or {}).get('system_type') or '').upper() or ('FUTURES' if fam=='CRYPTO_FUTURES' else 'SPOT')
+    action=str((row or {}).get('action') or '').upper()
+    if not action:
+        direction=str((row or {}).get('direction') or '').upper()
+        if system=='SPOT':
+            action='COMPRA_SPOT' if direction=='LONG' else ('VENTA_SPOT' if direction=='SHORT' else '')
+        elif direction in {'LONG','SHORT'}:
+            action=direction
+    return f'{system}|{fam}|{sym}|{tf}|{action}' if fam and sym and tf and action else ''
 
-    FREE-PLAN: only Shadow-ready incumbents are needed to know which cells are
-    already filled. Do not download every rejected/observational promotion.
+
+def _canonical_champion_cells(engine: str | None = None):
+    """Tiny canonical read: one row per validated cell, never the lab history."""
+    params={
+        'select':'cell_key,research_version,system_type,market_family,symbol,timeframe,action,direction,candidate_key,source_engine,status,alpha_state,updated_at',
+        'status':'neq.DEGRADED',
+        'order':'updated_at.desc',
+        'limit':'80',
+    }
+    owner=str(engine or '').lower()
+    if owner and owner!='validation':
+        params['source_engine']=f'eq.{owner}'
+    rows=central.select('research_champions_v1', params=params, timeout=4, retries=0)
+    out=set()
+    for row in rows or []:
+        cid=_knowledge_cell_to_coverage_id(row)
+        if cid:
+            out.add(cid)
+    return out
+
+
+def _blocked_candidate_strategy_ids():
+    """Compact anti-repeat memory, cached for six hours to protect Free egress.
+
+    Only fingerprints still inside their cooldown are blocked. Old failures can
+    therefore be retested after market regimes have had time to change.
     """
+    now_m=time.monotonic()
+    with _CANDIDATE_MEMORY_CACHE['lock']:
+        cached=dict(_CANDIDATE_MEMORY_CACHE.get('blocked') or {})
+        if cached and now_m-float(_CANDIDATE_MEMORY_CACHE.get('ts') or 0.0)<_CANDIDATE_MEMORY_TTL:
+            return cached
     try:
-        rows=central.paged_select('research_promotions_v1', params={
-            'select':'candidate_key,source_engine,experiment,stage,scope,metrics,meta,research_version,updated_at',
-            'source_engine':f'eq.{engine}',
-            'research_version':f'eq.{config.VERSION}',
-            'stage':'in.(SHADOW_READY,SHADOW_READY_FAST)',
-            'order':'updated_at.desc',
-        }, max_rows=320, page_size=160)
+        rows=central.paged_select('research_candidate_memory_v1', params={
+            'select':'cell_key,action,direction,strategy_id,retest_after',
+            'strategy_id':'not.is.null',
+            'retest_after':f'gt.{utc_now()}',
+            'order':'retest_after.desc',
+        }, max_rows=5000, page_size=500)
+    except Exception as exc:
+        print(f'⚠️ candidate memory unavailable: {str(exc)[:140]}', flush=True)
+        return cached
+    out={}
+    for row in rows or []:
+        raw=str(row.get('cell_key') or '').upper().split('|')
+        if len(raw)==5:
+            system,fam,sym,tf,action=raw
+        elif len(raw)==3:  # transitional RC8 rows before action migration
+            fam,sym,tf=raw
+            system='FUTURES' if fam=='CRYPTO_FUTURES' else 'SPOT'
+            direction=str(row.get('direction') or '').upper()
+            action=str(row.get('action') or '').upper()
+            if not action:
+                action=('COMPRA_SPOT' if direction=='LONG' else 'VENTA_SPOT') if system=='SPOT' else direction
+        else:
+            continue
+        if not action:
+            continue
+        cid=f'{system}|{fam}|{sym}|{tf}|{action}'
+        sid=str(row.get('strategy_id') or '')
+        if sid:
+            out.setdefault(cid,set()).add(sid)
+    with _CANDIDATE_MEMORY_CACHE['lock']:
+        _CANDIDATE_MEMORY_CACHE['blocked']={k:set(v) for k,v in out.items()}
+        _CANDIDATE_MEMORY_CACHE['ts']=now_m
+    return out
+
+
+def _priority_cells_for_engine(engine: str):
+    """Prioritize genuinely empty/degraded cells from the canonical 92-row action core."""
+    try:
+        filled=_canonical_champion_cells(engine)
     except Exception:
         return set()
-    champions=_persistent_champions_by_cell(rows)
-    filled=set(champions)
     priority=set()
     for cell in all_coverage_cells():
         if owner_for_cell(cell)!=str(engine).lower():
@@ -1090,52 +1230,24 @@ def _priority_cells_for_engine(engine: str):
 
 
 def _bootstrap_status(engine: str | None = None):
-    """Fast-search continues only for cells without a persistent Champion.
-
-    FREE-PLAN: this 5-minute check must be tiny. We only fetch potential
-    incumbents (SHADOW_READY*) instead of thousands of challenger rows.
-    """
-    owner = str(engine or config.ENGINE).lower()
-    expected = [c for c in all_coverage_cells() if owner == "validation" or owner_for_cell(c) == owner]
-    expected_ids = {coverage_cell_id(c) for c in expected}
+    """Fast-5 reads only the canonical Champion core (max 92 rows)."""
+    owner=str(engine or config.ENGINE).lower()
+    expected=[c for c in all_coverage_cells() if owner=='validation' or owner_for_cell(c)==owner]
+    expected_ids={coverage_cell_id(c) for c in expected}
     if not expected_ids:
-        return {"expected":0,"complete":0,"pending_ids":set()}
-    params={
-        'select':'candidate_key,source_engine,experiment,stage,scope,metrics,meta,research_version,updated_at',
-        'research_version':f'eq.{config.VERSION}',
-        'stage':'in.(SHADOW_READY,SHADOW_READY_FAST)',
-        'order':'updated_at.desc',
-    }
-    if owner != 'validation':
-        params['source_engine']=f'eq.{owner}'
+        return {'expected':0,'complete':0,'pending_ids':set()}
     try:
-        rows=central.paged_select(
-            'research_promotions_v1',
-            params=params,
-            max_rows=520 if owner == 'validation' else 220,
-            page_size=130,
-        )
+        complete=_canonical_champion_cells(None if owner=='validation' else owner) & expected_ids
     except Exception as exc:
         msg=str(exc)
         print(f'⚠️ bootstrap status: {msg}',flush=True)
-        # Reaching the local Free-plan egress guard is not a provider outage.
-        # Evidence engines may continue causal Fast-5 using the last known
-        # pending-cell set because causal market data comes from the exchange,
-        # not Supabase. Validation still pauses because it requires DB evidence.
         cached=set(_state.get('bootstrap_pending_ids_cached') or [])
-        if 'SUPABASE_EGRESS_GUARD_OPEN' in msg and owner != 'validation' and cached:
-            return {
-                "expected":len(expected_ids),
-                "complete":len(expected_ids-cached),
-                "pending_ids":cached,
-                "egress_guard":True,
-            }
-        return {"expected":len(expected_ids),"complete":None,"pending_ids":set(),"read_error":True,"error":msg[:180]}
-    champions=_persistent_champions_by_cell(rows)
-    complete={cid for cid in champions if cid in expected_ids}
+        if 'SUPABASE_EGRESS_GUARD_OPEN' in msg and owner!='validation' and cached:
+            return {'expected':len(expected_ids),'complete':len(expected_ids-cached),'pending_ids':cached,'egress_guard':True}
+        return {'expected':len(expected_ids),'complete':None,'pending_ids':set(),'read_error':True,'error':msg[:180]}
     pending=expected_ids-complete
     _state['bootstrap_pending_ids_cached']=sorted(pending)
-    return {"expected":len(expected_ids),"complete":len(complete),"pending_ids":pending}
+    return {'expected':len(expected_ids),'complete':len(complete),'pending_ids':pending}
 
 
 def _bootstrap_interval_minutes():
@@ -1143,7 +1255,7 @@ def _bootstrap_interval_minutes():
         return int(config.AUTO_INTERVAL_MINUTES), set(), 'NORMAL'
     status=_bootstrap_status(config.ENGINE)
     if status.get('read_error'):
-        # Provider outage != 46 missing cells. Keep Fast-5 as the healthy cadence,
+        # Provider outage != 92 missing action cells. Keep Fast-5 as the healthy cadence,
         # but pause heavy jobs while the DB cannot even report current Champions.
         _state['infra_degraded']=True
         _state['infra_last_error']=status.get('error') or 'Supabase unavailable'
@@ -1227,12 +1339,14 @@ def _run_job(days: int, max_rows: int):
                 # Shadow-ready. Once the whole lane is validated, the 3h cycle
                 # retests incumbents on new candles rather than replacing a
                 # proven specialist merely because a different search wave ran.
+                blocked_map=_blocked_candidate_strategy_ids() if bootstrap_pending else {}
                 causal_findings = (
                     analyze_coverage_for_engine(
                         config.ENGINE,
                         on_finding=_publish_causal,
                         priority_cell_ids=_priority_cells_for_engine(config.ENGINE),
                         only_cell_ids=bootstrap_pending,
+                        blocked_strategy_ids_by_cell=blocked_map,
                     ) if bootstrap_pending else []
                 )
                 _state['last_causal_cells'] = len({

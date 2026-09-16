@@ -3,10 +3,14 @@ from __future__ import annotations
 """FINAL V1 RC4 — Active Symbol×Timeframe Profitability Coverage.
 
 Research target:
-- Futures core: 7 symbols × (30M,1H,2H,4H) = 28 specialist cells.
-- Futures swing context: BTC/ETH/SOL × (12H,1D) = 6 specialist cells.
-- Spot: BTC-USDT, PAXG-USDT, PAXG-BTC × 4 TF = 12 cells.
-- Total contract = 46 cells.
+- Futures core: 7 symbols × (30M,1H,2H,4H) × (LONG,SHORT) = 56 action cells.
+- Futures swing context: BTC/ETH/SOL × (12H,1D) × (LONG,SHORT) = 12 action cells.
+- Spot: BTC-USDT, PAXG-USDT, PAXG-BTC × 4 TF × (COMPRA_SPOT,VENTA_SPOT) = 24 action cells.
+- Total contract = 92 cells.
+
+RC8.1: profitability authority is action-specific. A LONG edge never fills SHORT;
+a COMPRA_SPOT edge never fills VENTA_SPOT. Regime remains a StrategySpec/filter,
+not a mandatory extra governance dimension.
 
 5m/15m were retired from V1 after the final audit: they were not part of the
 operator's intended workflow and consumed disproportionate refresh/backtest
@@ -43,11 +47,22 @@ FUTURES_TFS = FUTURES_CORE_TFS + FUTURES_HIGH_TFS
 SPOT_TFS = ("4H", "12H", "1D", "1W")
 
 
-def _future_cells(tfs: Sequence[str], symbols: Sequence[str] = FUTURES_SYMBOLS) -> List[Tuple[str, str, str, str]]:
-    return [("futures", "CRYPTO_FUTURES", symbol, tf) for tf in tfs for symbol in symbols]
+def _future_cells(tfs: Sequence[str], symbols: Sequence[str] = FUTURES_SYMBOLS) -> List[Tuple[str, str, str, str, str]]:
+    return [("futures", "CRYPTO_FUTURES", symbol, tf, action)
+            for tf in tfs for symbol in symbols for action in ("LONG", "SHORT")]
+
+def _spot_cells(family: str, symbol: str, tfs: Sequence[str]) -> List[Tuple[str, str, str, str, str]]:
+    return [("spot", family, symbol, tf, action)
+            for tf in tfs for action in ("COMPRA_SPOT", "VENTA_SPOT")]
+
+def _action_direction(system_type: str, action: str) -> str:
+    action=str(action or '').upper()
+    if str(system_type or '').lower() == 'spot':
+        return 'LONG' if action == 'COMPRA_SPOT' else 'SHORT'
+    return action if action in {'LONG','SHORT'} else 'BOTH'
 
 
-# RC4 balances the four workers while adding only six high-TF cells.
+# RC8.1 keeps the four workers but each base market cell is split by action.
 # 12H/1D are also useful as context for lower-TF production decisions, but each
 # remains its own independently validated profitability cell.
 LANES = {
@@ -55,28 +70,28 @@ LANES = {
     "risk": [*_future_cells(("1H",)), *_future_cells(("1D",), FUTURES_HIGH_TF_SYMBOLS)],          # 10
     "strategy": _future_cells(("2H", "4H")),                                                    # 14
     "traders": [
-        *[("spot", "CRYPTO_SPOT", "BTC-USDT", tf) for tf in SPOT_TFS],
-        *[("spot", "PAXG_USDT", "PAXG-USDT", tf) for tf in SPOT_TFS],
-        *[("spot", "PAXG_BTC", "PAXG-BTC", tf) for tf in SPOT_TFS],
-    ],                                                    # 12
+        *_spot_cells("CRYPTO_SPOT", "BTC-USDT", SPOT_TFS),
+        *_spot_cells("PAXG_USDT", "PAXG-USDT", SPOT_TFS),
+        *_spot_cells("PAXG_BTC", "PAXG-BTC", SPOT_TFS),
+    ],                                                    # 24 action cells
 }
 
 
-def all_coverage_cells() -> List[Tuple[str, str, str, str]]:
-    out: List[Tuple[str, str, str, str]] = []
+def all_coverage_cells() -> List[Tuple[str, str, str, str, str]]:
+    out: List[Tuple[str, str, str, str, str]] = []
     for owner in ("execution", "risk", "strategy", "traders"):
         out.extend(LANES.get(owner, []))
     return out
 
 
-def owner_for_cell(cell: Tuple[str, str, str, str]) -> str:
+def owner_for_cell(cell: Tuple[str, str, str, str, str]) -> str:
     for owner, cells in LANES.items():
         if cell in cells:
             return owner
     return "strategy"
 
 
-def coverage_cell_id(cell: Tuple[str, str, str, str]) -> str:
+def coverage_cell_id(cell: Tuple[str, str, str, str, str]) -> str:
     return "|".join(str(x).upper() for x in cell)
 
 
@@ -103,7 +118,7 @@ INDICATOR_COVERAGE_MANIFEST={
 }
 
 
-def _search_wave(cell: Tuple[str,str,str,str]) -> tuple[int,str]:
+def _search_wave(cell: Tuple[str,str,str,str,str]) -> tuple[int,str]:
     # Result-independent rotation: time slot + stable cell hash. OOS never selects
     # what is tried next, which reduces adaptive p-hacking risk.
     slot=max(1,int(getattr(config,"BOOTSTRAP_FAST_MINUTES",5)))*60
@@ -203,16 +218,17 @@ def _refine(seed: StrategySpec, tf: str = "") -> Iterable[StrategySpec]:
                 )
 
 
-def _strategy_id(cell: Tuple[str, str, str, str], spec: StrategySpec) -> str:
+def _strategy_id(cell: Tuple[str, str, str, str, str], spec: StrategySpec) -> str:
     raw = json.dumps({"cell": cell, "spec": spec.key()}, sort_keys=True, separators=(",", ":"))
     return "CI_" + hashlib.sha256(raw.encode()).hexdigest()[:20]
 
 
-def _scope(cell: Tuple[str, str, str, str], spec: StrategySpec) -> Dict[str, str]:
-    system_type, family, symbol, tf = cell
-    scope = {"market_family": family, "timeframe": tf, "symbol": symbol}
-    if spec.direction_mode in {"LONG", "SHORT"}:
-        scope["direction"] = spec.direction_mode
+def _scope(cell: Tuple[str, str, str, str, str], spec: StrategySpec) -> Dict[str, str]:
+    system_type, family, symbol, tf, action = cell
+    direction = _action_direction(system_type, action)
+    scope = {"market_family": family, "timeframe": tf, "symbol": symbol, "action": action}
+    if direction in {"LONG", "SHORT"}:
+        scope["direction"] = direction
     if spec.family in {"TREND_CONTINUATION", "TREND_PULLBACK", "EMA_RECLAIM", "RSI_TREND", "MOMENTUM_BREAKOUT", "MACD_TREND", "ADX_DI_TREND", "SUPERTREND_PULLBACK", "MFI_OBV_FLOW", "FIB_RETRACE_TREND", "HIDDEN_DIVERGENCE_TREND", "MULTI_RSI_TREND", "ICHIMOKU_TREND", "VOLUME_PROFILE_RETEST", "FVG_RECLAIM"}:
         scope["regime"] = "TREND_UP" if spec.direction_mode == "LONG" else "TREND_DOWN"
     elif spec.family in {"MEAN_REVERSION","STOCH_REVERSAL","CCI_WILLIAMS_REVERSAL","MFI_REVERSAL","RSI_MAVERICK_REVERSAL","BOLLINGER_REVERSION","VWAP_REVERSION","DIVERGENCE_REVERSAL"}:
@@ -224,8 +240,8 @@ def _scope(cell: Tuple[str, str, str, str], spec: StrategySpec) -> Dict[str, str
     return scope
 
 
-def _load_cell(cell: Tuple[str, str, str, str]) -> Dict[str, Sequence[Any]]:
-    system_type, _family, symbol, tf = cell
+def _load_cell(cell: Tuple[str, str, str, str, str]) -> Dict[str, Sequence[Any]]:
+    system_type, _family, symbol, tf, _action = cell
     bars = _bars_for(tf)
     symbols = [symbol]
     data: Dict[str, Sequence[Any]] = {}
@@ -314,16 +330,39 @@ def _diverse_finalists(ranked, limit: int):
     return chosen
 
 
-def optimize_cell_candidates(cell: Tuple[str, str, str, str], owner_engine: str | None = None) -> List[Dict[str, Any]]:
-    """Return pre-ranked finalists; ranking never reads Final OOS."""
+def optimize_cell_candidates(cell: Tuple[str, str, str, str, str], owner_engine: str | None = None, blocked_strategy_ids=None) -> List[Dict[str, Any]]:
+    """Return pre-ranked finalists; ranking never reads Final OOS.
+
+    RC8 Knowledge Core: exact configurations still inside their rejection cooldown
+    are skipped using compact candidate-memory IDs.  The search remains
+    result-independent otherwise: wave rotation is driven by time+cell hash, not
+    by Final OOS, and expired configurations may be retested in a new regime.
+    """
     started = time.time()
-    system_type, family, symbol, tf = cell
+    system_type, family, symbol, tf, action = cell
     data = _load_cell(cell)
     if not data:
         return [_finding(cell, None, {}, {}, "NO_HISTORY", started, data, owner_engine=owner_engine, finalist_rank=1)]
 
+    blocked = {str(x) for x in (blocked_strategy_ids or set()) if x}
     wave_idx, wave_name = _search_wave(cell)
-    declared_specs = _wave_specs(tf, wave_name)
+    target_direction = _action_direction(system_type, action)
+    declared_specs = [spec for spec in _wave_specs(tf, wave_name) if spec.direction_mode == target_direction]
+    if blocked:
+        declared_specs = [spec for spec in declared_specs if _strategy_id(cell, spec) not in blocked]
+        # If this wave was already exhausted, advance deterministically through
+        # the predeclared universe instead of immediately retesting a rejection.
+        if not declared_specs:
+            active_waves=SEARCH_WAVE_NAMES[:min(len(SEARCH_WAVE_NAMES),int(getattr(config,'RC5_SEARCH_WAVES',8)))]
+            base_idx = active_waves.index(wave_name) if wave_name in active_waves else (wave_idx % len(active_waves))
+            for offset in range(1, len(active_waves)):
+                alt = active_waves[(base_idx + offset) % len(active_waves)]
+                alt_specs = [spec for spec in _wave_specs(tf, alt) if spec.direction_mode == target_direction and _strategy_id(cell, spec) not in blocked]
+                if alt_specs:
+                    wave_name = alt
+                    wave_idx = (base_idx + offset) % len(SEARCH_WAVE_NAMES)
+                    declared_specs = alt_specs
+                    break
     coarse = []
     for spec in declared_specs:
         metrics, exec_stats = _evaluate(data, system_type, spec)
@@ -338,7 +377,7 @@ def optimize_cell_candidates(cell: Tuple[str, str, str, str], owner_engine: str 
     max_refined = max(16, int(getattr(config, "CAUSAL_MAX_REFINED_PER_CELL", 84)))
     for _, seed, _, _ in seeds:
         for spec in _refine(seed, tf):
-            if spec.key() in seen:
+            if spec.key() in seen or _strategy_id(cell, spec) in blocked:
                 continue
             seen.add(spec.key())
             metrics, exec_stats = _evaluate(data, system_type, spec)
@@ -366,7 +405,7 @@ def optimize_cell_candidates(cell: Tuple[str, str, str, str], owner_engine: str 
     return out
 
 
-def optimize_cell(cell: Tuple[str, str, str, str], owner_engine: str | None = None) -> Dict[str, Any]:
+def optimize_cell(cell: Tuple[str, str, str, str, str], owner_engine: str | None = None) -> Dict[str, Any]:
     """Compatibility wrapper used by older tests/rescue code."""
     return optimize_cell_candidates(cell, owner_engine=owner_engine)[0]
 
@@ -391,7 +430,7 @@ def _causal_dataset_signature(data: Dict[str, Sequence[Any]]) -> str:
 
 
 def _finding(cell, spec, metrics, exec_stats, status, started, data, candidates_tested=0, owner_engine=None, finalist_rank=1, finalists_tested=1, search_wave="REGISTRY", search_wave_index=-1, declared_candidates=1):
-    system_type, family, symbol, tf = cell
+    system_type, family, symbol, tf, action = cell
     if spec is None:
         spec = StrategySpec("NONE", "BOTH", max_hold=_hold_bars(tf), max_wait=_wait_bars(tf))
     scope = _scope(cell, spec)
@@ -410,11 +449,11 @@ def _finding(cell, spec, metrics, exec_stats, status, started, data, candidates_
         "meta": {
             "is_causal_coverage": True,
             "causal_candle_replay": True,
-            "coverage_cell": {"system_type": system_type, "market_family": family, "symbol": symbol, "timeframe": tf},
+            "coverage_cell": {"system_type": system_type, "market_family": family, "symbol": symbol, "timeframe": tf, "action": action},
             "coverage_cell_id": coverage_cell_id(cell),
             "coverage_owner_engine": source_engine,
             "coverage_status": status,
-            "coverage_target_mode": "ONE_VALIDATED_SPECIALIST_PER_SYMBOL_TIMEFRAME",
+            "coverage_target_mode": "ONE_VALIDATED_SPECIALIST_PER_MARKET_SYMBOL_TIMEFRAME_ACTION",
             "causal_strategy_id": strategy_id,
             "causal_strategy_family": spec.family,
             "causal_strategy_spec": spec.__dict__,
@@ -510,16 +549,21 @@ def retest_registry_promotions(rows: List[Dict[str, Any]], engine: str, on_findi
             continue
         meta = row.get("meta") or {}
         cell_raw = meta.get("coverage_cell") or {}
+        system_type=str(cell_raw.get("system_type") or "").lower()
+        spec = _spec_from_meta(meta)
+        if spec is None:
+            continue
+        action=str(cell_raw.get("action") or "").upper()
+        if not action:
+            action = ("COMPRA_SPOT" if spec.direction_mode == "LONG" else "VENTA_SPOT") if system_type == "spot" else spec.direction_mode
         cell = (
-            str(cell_raw.get("system_type") or "").lower(),
+            system_type,
             str(cell_raw.get("market_family") or ""),
             str(cell_raw.get("symbol") or "").upper(),
             str(cell_raw.get("timeframe") or "").upper(),
+            action,
         )
         if cell not in LANES.get(owner, []):
-            continue
-        spec = _spec_from_meta(meta)
-        if spec is None:
             continue
         dedupe = (coverage_cell_id(cell), spec.key())
         if dedupe in seen:
@@ -564,7 +608,7 @@ def retest_registry_promotions(rows: List[Dict[str, Any]], engine: str, on_findi
     return out
 
 
-def analyze_coverage_for_engine(engine: str, on_finding=None, priority_cell_ids=None, only_cell_ids=None) -> List[Dict[str, Any]]:
+def analyze_coverage_for_engine(engine: str, on_finding=None, priority_cell_ids=None, only_cell_ids=None, blocked_strategy_ids_by_cell=None) -> List[Dict[str, Any]]:
     if not bool(getattr(config, "CAUSAL_ENABLED", True)):
         return []
     owner = str(engine or "").lower()
@@ -579,8 +623,9 @@ def analyze_coverage_for_engine(engine: str, on_finding=None, priority_cell_ids=
         if rss_mb() >= getattr(config, "MEMORY_HARD_MB", 430):
             print(f"🧠 [I.2 CAUSAL] hard memory gate at {rss_mb():.1f}MB", flush=True)
             break
-        print(f"🧪 [I.2 CAUSAL] {owner} -> {cell[2]} {cell[3]}", flush=True)
-        findings = optimize_cell_candidates(cell, owner_engine=owner)
+        print(f"🧪 [I.2 CAUSAL] {owner} -> {cell[2]} {cell[3]} {cell[4]}", flush=True)
+        blocked_map = blocked_strategy_ids_by_cell or {}
+        findings = optimize_cell_candidates(cell, owner_engine=owner, blocked_strategy_ids=blocked_map.get(coverage_cell_id(cell), set()))
         out.extend(findings)
         if callable(on_finding):
             for finding in findings:

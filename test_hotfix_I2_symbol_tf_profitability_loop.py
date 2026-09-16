@@ -9,13 +9,13 @@ ROOT=Path(__file__).resolve().parent
 
 def test_final_v1_contract_is_46_cells():
     cells=all_coverage_cells()
-    assert config.CAUSAL_REQUIRED_CELLS == 46
-    assert len(cells)==46
-    assert len({coverage_cell_id(x) for x in cells})==46
+    assert config.CAUSAL_REQUIRED_CELLS == 92
+    assert len(cells)==92
+    assert len({coverage_cell_id(x) for x in cells})==92
     futures=[x for x in cells if x[0]=='futures']
     spot=[x for x in cells if x[0]=='spot']
-    assert len(futures)==34
-    assert len(spot)==12
+    assert len(futures)==68
+    assert len(spot)==24
 
 
 def test_each_futures_symbol_has_each_operational_tf():

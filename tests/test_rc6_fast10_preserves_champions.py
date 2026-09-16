@@ -8,5 +8,5 @@ def test_rc7_fast_cadence_is_five_minutes():
 def test_rc6_preserves_rc5_research_generation():
     # RC7 changes scheduler cadence/card metadata only. Keeping the generation id prevents
     # already validated RC5 champions from disappearing from current fusion.
-    assert config.VERSION == "RFV1_12_RC5_ITERATIVE_EDGE_46CELL_20260915"
-    assert config.SCHEDULER_POLICY_VERSION == "RC7_FAST5_PRESERVE_CHAMPIONS"
+    assert config.VERSION == "RFV1_13_RC8_1_ACTION_EDGE_92CELL_20260916"
+    assert config.SCHEDULER_POLICY_VERSION == "RC8_1_FAST5_ACTION_CHAMPIONS"

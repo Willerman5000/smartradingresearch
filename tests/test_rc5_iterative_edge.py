@@ -20,9 +20,9 @@ class RC5IterativeEdgeTests(unittest.TestCase):
         return out
 
     def test_contract_and_version(self):
-        self.assertEqual(len(all_coverage_cells()),46)
-        self.assertEqual(config.CAUSAL_REQUIRED_CELLS,46)
-        self.assertTrue(config.VERSION.startswith('RFV1_12_RC5_ITERATIVE_EDGE_46CELL'))
+        self.assertEqual(len(all_coverage_cells()),92)
+        self.assertEqual(config.CAUSAL_REQUIRED_CELLS,92)
+        self.assertTrue(config.VERSION.startswith('RFV1_13_RC8_1_ACTION_EDGE_92CELL'))
 
     def test_all_search_waves_have_candidates(self):
         for wave in SEARCH_WAVE_NAMES:
@@ -65,7 +65,8 @@ class RC5IterativeEdgeTests(unittest.TestCase):
     def test_bootstrap_uses_persistent_champion_state(self):
         text=(ROOT/'app.py').read_text(encoding='utf-8')
         block=text[text.index('def _bootstrap_status'):text.index('def _bootstrap_interval_minutes')]
-        self.assertIn('_persistent_champions_by_cell(rows)',block)
+        self.assertIn('_canonical_champion_cells',block)
+        self.assertIn('research_champions_v1',(ROOT/'app.py').read_text(encoding='utf-8'))
         self.assertIn('pending_ids',block)
         self.assertIn('expected_ids-complete',block)
 
@@ -74,7 +75,7 @@ class RC5IterativeEdgeTests(unittest.TestCase):
         self.assertEqual(config.AUTO_INTERVAL_MINUTES, 180)
         text=(ROOT/'app.py').read_text(encoding='utf-8')
         block=text[text.index('def _bootstrap_status'):text.index('def _run_job')]
-        self.assertIn("_persistent_champions_by_cell", block)
+        self.assertIn("_canonical_champion_cells", block)
         self.assertIn("count <= 0", block)
         self.assertIn("BOOTSTRAP_FAST_MINUTES", block)
 

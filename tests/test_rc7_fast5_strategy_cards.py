@@ -36,8 +36,8 @@ def _sample_card(stage="SHADOW_READY"):
 
 def test_rc7_fast5_changes_scheduler_only_not_research_generation():
     assert config.BOOTSTRAP_FAST_MINUTES == 5
-    assert config.VERSION == "RFV1_12_RC5_ITERATIVE_EDGE_46CELL_20260915"
-    assert config.SCHEDULER_POLICY_VERSION == "RC7_FAST5_PRESERVE_CHAMPIONS"
+    assert config.VERSION == "RFV1_13_RC8_1_ACTION_EDGE_92CELL_20260916"
+    assert config.SCHEDULER_POLICY_VERSION == "RC8_1_FAST5_ACTION_CHAMPIONS"
     assert config.MEMORY_HARD_MB == 430
     assert config.CAUSAL_MEMORY_TARGET_MB == 390
 
