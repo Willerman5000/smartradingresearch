@@ -106,7 +106,7 @@ INDICATOR_COVERAGE_MANIFEST={
 def _search_wave(cell: Tuple[str,str,str,str]) -> tuple[int,str]:
     # Result-independent rotation: time slot + stable cell hash. OOS never selects
     # what is tried next, which reduces adaptive p-hacking risk.
-    slot=max(1,int(getattr(config,"BOOTSTRAP_FAST_MINUTES",10)))*60
+    slot=max(1,int(getattr(config,"BOOTSTRAP_FAST_MINUTES",5)))*60
     epoch=int(time.time()//slot)
     h=int(hashlib.sha256(coverage_cell_id(cell).encode()).hexdigest()[:8],16)
     idx=(epoch+h)%min(len(SEARCH_WAVE_NAMES),int(getattr(config,"RC5_SEARCH_WAVES",8)))

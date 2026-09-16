@@ -5,6 +5,7 @@ import config
 from config import VERSION
 from db import utc_now
 from metrics import num
+from strategy_card import build_strategy_card
 ENGINE="validation"
 
 
@@ -162,6 +163,15 @@ def analyze_findings(rows: List[Dict[str,Any]]) -> List[Dict[str,Any]]:
             reason="Muestra insuficiente."
 
         final_meta=dict(row_meta)
+        if is_causal and isinstance(row_meta.get("causal_strategy_spec"), dict):
+            final_meta["strategy_card"] = build_strategy_card(
+                strategy_id=str(row_meta.get("causal_strategy_id") or ""),
+                scope=scope,
+                spec=row_meta.get("causal_strategy_spec") or {},
+                metrics=metrics,
+                stage=stage,
+                updated_at=row.get("updated_at"),
+            )
         final_meta.update({
             "net_evidence_pct":net_pct,
             'production_changes_allowed': False,

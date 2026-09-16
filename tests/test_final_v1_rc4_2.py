@@ -12,7 +12,7 @@ def test_final_contract_and_bootstrap_policy():
     assert len(cells) == 46
     assert len({coverage_cell_id(c) for c in cells}) == 46
     assert config.BOOTSTRAP_ACCELERATED is True
-    assert config.BOOTSTRAP_FAST_MINUTES == 10
+    assert config.BOOTSTRAP_FAST_MINUTES == 5
     assert config.BOOTSTRAP_BACKOFF_MINUTES >= 60
     assert config.AUTO_INTERVAL_MINUTES == 180
 

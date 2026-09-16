@@ -680,7 +680,7 @@ def _bootstrap_interval_minutes():
         minutes=int(getattr(config, 'BOOTSTRAP_BACKOFF_MINUTES', 60))
     else:
         mode='BOOTSTRAP_FAST'
-        minutes=int(getattr(config, 'BOOTSTRAP_FAST_MINUTES', 10))
+        minutes=int(getattr(config, 'BOOTSTRAP_FAST_MINUTES', 5))
     _state['bootstrap_mode']=mode
     return minutes, pending, mode
 
@@ -873,7 +873,7 @@ def _auto_loop():
         except Exception as exc:
             print(f'⚠️ auto-loop {config.ENGINE}: {exc}', flush=True)
             minutes = int(getattr(config, 'BOOTSTRAP_BACKOFF_MINUTES', 60))
-        time.sleep(max(10, int(minutes)) * 60)
+        time.sleep(max(5, int(minutes)) * 60)
 
 
 if config.ENGINE not in config.VALID_ENGINES:

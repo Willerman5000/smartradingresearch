@@ -13,6 +13,8 @@ services:
         value: execution
       - key: RESEARCH_AUTO_INTERVAL_MINUTES
         value: 90
+      - key: RESEARCH_BOOTSTRAP_FAST_MINUTES
+        value: 5
       - key: RESEARCH_BOOT_DELAY_SECONDS
         value: 45
       - key: RESEARCH_MEMORY_HARD_MB
@@ -50,6 +52,8 @@ services:
         value: risk
       - key: RESEARCH_AUTO_INTERVAL_MINUTES
         value: 120
+      - key: RESEARCH_BOOTSTRAP_FAST_MINUTES
+        value: 5
       - key: RESEARCH_BOOT_DELAY_SECONDS
         value: 75
       - key: RESEARCH_MEMORY_HARD_MB
@@ -87,6 +91,8 @@ services:
         value: strategy
       - key: RESEARCH_AUTO_INTERVAL_MINUTES
         value: 180
+      - key: RESEARCH_BOOTSTRAP_FAST_MINUTES
+        value: 5
       - key: RESEARCH_BOOT_DELAY_SECONDS
         value: 105
       - key: RESEARCH_MEMORY_HARD_MB
@@ -124,6 +130,8 @@ services:
         value: traders
       - key: RESEARCH_AUTO_INTERVAL_MINUTES
         value: 180
+      - key: RESEARCH_BOOTSTRAP_FAST_MINUTES
+        value: 5
       - key: RESEARCH_BOOT_DELAY_SECONDS
         value: 135
       - key: RESEARCH_MEMORY_HARD_MB
@@ -161,6 +169,8 @@ services:
         value: validation
       - key: RESEARCH_AUTO_INTERVAL_MINUTES
         value: 180
+      - key: RESEARCH_BOOTSTRAP_FAST_MINUTES
+        value: 5
       - key: RESEARCH_BOOT_DELAY_SECONDS
         value: 420
       - key: RESEARCH_MEMORY_HARD_MB

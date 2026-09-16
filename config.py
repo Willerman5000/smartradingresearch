@@ -41,20 +41,20 @@ WINDOW_DAYS = _int("RESEARCH_WINDOW_DAYS", 180, 30, 730)
 FINDING_LIMIT = _int("RESEARCH_FINDING_LIMIT", 180, 20, 500)
 AUTO_RUN = _bool("RESEARCH_AUTO_RUN", True)
 AUTO_INTERVAL_MINUTES = _int("RESEARCH_AUTO_INTERVAL_MINUTES", 180, 10, 1440)
-# RC5 — accelerated iterative search. Research stays fast while any active
+# RC7 — accelerated iterative search. Research stays fast while any active
 # market×symbol×TF cell lacks a CURRENT SHADOW_READY/SHADOW_READY_FAST specialist.
-# Default cadence is 15 minutes (10 is allowed by env). Only after 46/46 cells
-# have a validated Shadow-ready specialist does the system return to 180 minutes.
-# Memory pressure can temporarily back off without lowering any validation gate.
+# Fast cadence is 5 minutes. It changes scheduling ONLY: Discovery 60% →
+# Selection 20% → Final OOS 20%, sample gates and champion preservation remain
+# untouched. Memory pressure can temporarily back off without lowering gates.
 BOOTSTRAP_ACCELERATED = _bool("RESEARCH_BOOTSTRAP_ACCELERATED", True)
-BOOTSTRAP_FAST_MINUTES = _int("RESEARCH_BOOTSTRAP_FAST_MINUTES", 10, 10, 180)
+BOOTSTRAP_FAST_MINUTES = _int("RESEARCH_BOOTSTRAP_FAST_MINUTES", 5, 5, 180)
 BOOTSTRAP_BACKOFF_MINUTES = _int("RESEARCH_BOOTSTRAP_BACKOFF_MINUTES", 60, 15, 360)
 BOOTSTRAP_STALL_CYCLES = _int("RESEARCH_BOOTSTRAP_STALL_CYCLES", 3, 1, 12)
 BOOTSTRAP_VALIDATION_DELAY_SECONDS = _int("RESEARCH_BOOTSTRAP_VALIDATION_DELAY_SECONDS", 90, 30, 300)
 BOOT_DELAY_SECONDS = _int("RESEARCH_BOOT_DELAY_SECONDS", 45, 5, 600)
 AUTHORITY = "RESEARCH_ONLY"
 VERSION = "RFV1_12_RC5_ITERATIVE_EDGE_46CELL_20260915"
-SCHEDULER_POLICY_VERSION = "RC6_FAST10_PRESERVE_CHAMPIONS"
+SCHEDULER_POLICY_VERSION = "RC7_FAST5_PRESERVE_CHAMPIONS"
 RELEASE_LABEL = "V1 · ITERATIVE EDGE"
 VALID_ENGINES = {"execution", "risk", "strategy", "traders", "validation"}
 DASHBOARD_MAX_ROWS = _int("RESEARCH_DASHBOARD_MAX_ROWS", 180, 20, 300)
