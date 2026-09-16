@@ -62,19 +62,19 @@ class RC5IterativeEdgeTests(unittest.TestCase):
             self.assertEqual(len(feat['rsi']),len(candles))
             _direction_signal(len(candles)-2,spec,feat,candles)
 
-    def test_bootstrap_uses_latest_cell_state_only(self):
+    def test_bootstrap_uses_persistent_champion_state(self):
         text=(ROOT/'app.py').read_text(encoding='utf-8')
         block=text[text.index('def _bootstrap_status'):text.index('def _bootstrap_interval_minutes')]
-        self.assertIn('complete=set(); seen=set()',block)
-        self.assertIn('cid not in expected_ids or cid in seen',block)
-        self.assertIn("{'SHADOW_READY','SHADOW_READY_FAST'}",block)
+        self.assertIn('_persistent_champions_by_cell(rows)',block)
+        self.assertIn('pending_ids',block)
+        self.assertIn('expected_ids-complete',block)
 
     def test_fast_search_cadence_until_all_shadow_ready(self):
         self.assertEqual(config.BOOTSTRAP_FAST_MINUTES, 5)
         self.assertEqual(config.AUTO_INTERVAL_MINUTES, 180)
         text=(ROOT/'app.py').read_text(encoding='utf-8')
         block=text[text.index('def _bootstrap_status'):text.index('def _run_job')]
-        self.assertIn("{'SHADOW_READY','SHADOW_READY_FAST'}", block)
+        self.assertIn("_persistent_champions_by_cell", block)
         self.assertIn("count <= 0", block)
         self.assertIn("BOOTSTRAP_FAST_MINUTES", block)
 

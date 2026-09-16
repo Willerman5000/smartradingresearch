@@ -325,35 +325,104 @@ def _row_in_active_contract(row):
     return tf not in {'5M','15M'}
 
 
-def _best_causal_per_cell(rows):
-    """One representative per symbol×TF cell for coverage/UI only.
+_SHADOW_STAGES = {'SHADOW_READY','SHADOW_READY_FAST'}
+_RETEST_EXPERIMENTS = {'CAUSAL_REGISTRY_RETEST','CAUSAL_SHADOW_RECYCLE'}
 
-    All finalists remain persisted and available to Validation; this helper
-    prevents 4 finalists from making a 46-cell matrix look like 216 cells.
+
+def _candidate_key(row):
+    return str((row or {}).get('candidate_key') or (row or {}).get('key') or (row or {}).get('feature_key') or '')
+
+
+def _lineage_root(row):
+    meta=(row or {}).get('meta') or {}
+    return str(meta.get('original_candidate_key') or _candidate_key(row) or '')
+
+
+def _explicitly_demoted_roots(rows):
+    """Only evidence on the incumbent's own lineage can unfill a cell.
+
+    A weak/new Challenger in the same cell never erases a previously validated
+    specialist. The incumbent is considered degraded only when its explicit
+    registry/shadow retest reaches REJECTED_OOS.
     """
-    best={}
+    out=set()
     for row in rows or []:
-        meta=row.get('meta') or {}
-        cid=str(meta.get('coverage_cell_id') or '')
-        if not cid:
+        meta=(row or {}).get('meta') or {}
+        if str((row or {}).get('experiment') or '') not in _RETEST_EXPERIMENTS:
             continue
-        metrics=row.get('metrics') or {}
-        val=metrics.get('validation') or {}
-        # RC5: newest validation state for the cell wins before stage. An older
-        # SHADOW_READY must never keep a cell green after a newer retest
-        # downgraded it to VALIDATION_REQUIRED/REJECTED.
-        score=(
-            str(row.get('updated_at') or ''),
-            _stage_priority(row.get('stage')),
-            float(val.get('expectancy_r') if val.get('expectancy_r') is not None else -999),
-            float(val.get('profit_factor') if val.get('profit_factor') is not None else -999),
-            int(val.get('resolved') or 0),
-            -int(meta.get('finalist_rank_selection_only') or 999),
-        )
+        root=str(meta.get('original_candidate_key') or '')
+        if root and str((row or {}).get('stage') or '').upper()=='REJECTED_OOS':
+            out.add(root)
+    return out
+
+
+def _champion_score(row):
+    """Deterministic challenger score; never used to evict a live incumbent."""
+    metrics=(row or {}).get('metrics') or {}
+    val=metrics.get('validation') or {}
+    return (
+        _stage_priority((row or {}).get('stage')),
+        float(val.get('expectancy_r') if val.get('expectancy_r') is not None else -999),
+        float(val.get('profit_factor') if val.get('profit_factor') is not None else -999),
+        int(val.get('resolved') or 0),
+        -int(((row or {}).get('meta') or {}).get('finalist_rank_selection_only') or 999),
+    )
+
+
+def _persistent_champions_by_cell(rows):
+    """Return one persistent incumbent per market×symbol×TF cell.
+
+    RC8 policy:
+    - first non-degraded SHADOW_READY lineage fills an empty cell;
+    - later candidates remain Challengers and cannot make the cell 'unfilled';
+    - only an explicit negative retest of that same lineage removes it;
+    - when an incumbent is degraded, the best already-validated Challenger may
+      become the new incumbent without lowering any OOS/Shadow gate.
+    """
+    rows=list(rows or [])
+    demoted=_explicitly_demoted_roots(rows)
+    grouped={}
+    for row in rows:
+        meta=row.get('meta') or {}
+        if meta.get('is_current') is False or str(row.get('stage') or '').upper()=='STALE':
+            continue
+        cid=str(meta.get('coverage_cell_id') or '')
+        if cid:
+            grouped.setdefault(cid,[]).append(row)
+    champions={}
+    for cid,items in grouped.items():
+        eligible=[r for r in items if str(r.get('stage') or '').upper() in _SHADOW_STAGES and _lineage_root(r) not in demoted]
+        if not eligible:
+            continue
+        explicit=[r for r in eligible if str(((r.get('meta') or {}).get('champion_role') or '')).upper()=='INCUMBENT']
+        pool=explicit or eligible
+        # Preserve the oldest validated lineage when possible. A positive retest
+        # of that lineage can represent it, but a newer unrelated challenger
+        # never silently replaces it.
+        roots={}
+        for r in pool:
+            roots.setdefault(_lineage_root(r),[]).append(r)
+        incumbent_root=min(roots, key=lambda root: min(str(x.get('updated_at') or '') for x in roots[root]))
+        lineage_rows=roots[incumbent_root]
+        champions[cid]=max(lineage_rows, key=lambda r:(str(r.get('updated_at') or ''), _champion_score(r)))
+    return champions
+
+
+def _best_causal_per_cell(rows):
+    """One representative per cell, with RC8 persistent Champion semantics."""
+    rows=list(rows or [])
+    champions=_persistent_champions_by_cell(rows)
+    best={}
+    for row in rows:
+        meta=row.get('meta') or {}; cid=str(meta.get('coverage_cell_id') or '')
+        if not cid or cid in champions:
+            continue
+        score=(str(row.get('updated_at') or ''),)+_champion_score(row)
         prev=best.get(cid)
-        if prev is None or score > prev[0]:
+        if prev is None or score>prev[0]:
             best[cid]=(score,row)
-    return [x[1] for x in best.values()]
+    out=list(champions.values())+[x[1] for x in best.values()]
+    return out
 
 
 def _dashboard_rows():
@@ -429,10 +498,10 @@ def _markdown_report(items):
             f'- Celdas símbolo×temporalidad visibles: {len(causal)}/{required}',
             f'- Celdas con Selection positiva: {selection_positive}',
             f'- Celdas con OOS final positivo: {oos_positive}',
-            f'- Celdas SHADOW_READY: {shadow_ready}',
-            f'- Celdas pendientes de especialista validado: {max(0, required-shadow_ready)}',
+            f'- Celdas con Champion persistente SHADOW_READY: {shadow_ready}',
+            f'- Celdas pendientes de Champion validado: {max(0, required-shadow_ready)}',
             f'- Cobertura investigada completa: {"SI" if len(causal)>=required else "NO"}',
-            '> Objetivo: al menos un especialista rentable validado por cada celda. Si una celda no demuestra edge, permanece SEARCHING/VALIDATION y vuelve al ciclo; nunca se fuerza un resultado.',
+            '> RC8: una celda validada conserva su Champion. Los nuevos candidatos son Challengers; sólo evidencia negativa del propio Champion puede reabrir la celda al ciclo iterativo.',
             '> Discovery 60% → Selection Holdout 20% → Final OOS 20%. Final OOS no se usa para elegir finalistas.',
             ''
         ]
@@ -503,6 +572,12 @@ def _rescue_missing_causal_cells(run_id: str):
 
 
 def _run_validation(run_id: str):
+    """Validate challengers without erasing an already proven cell Champion.
+
+    RC8 post-audit contract: a market×symbol×TF cell accumulates a persistent
+    incumbent. New generations are Challengers. The cell becomes unfilled only
+    after explicit negative evidence on the incumbent lineage itself.
+    """
     _rescue_missing_causal_cells(run_id)
     raw = central.paged_select('research_findings_v1', params={
         'select':'engine,experiment,feature_key,scope,stage,metrics,meta,research_version,updated_at',
@@ -510,22 +585,108 @@ def _run_validation(run_id: str):
         'order':'updated_at.desc',
     }, max_rows=6000, page_size=600)
     rows=[r for r in raw if (r.get('meta') or {}).get('is_current') is True and str(r.get('stage') or '')!='STALE']
+
+    # Snapshot incumbents BEFORE analyzing the new challenger batch.
+    try:
+        old = central.paged_select('research_promotions_v1', params={
+            'select':'candidate_key,source_engine,experiment,stage,authority,reason,scope,metrics,meta,research_version,updated_at',
+            'research_version':f'eq.{config.VERSION}',
+            'order':'updated_at.desc',
+        }, max_rows=5000, page_size=500)
+    except Exception as exc:
+        print(f'⚠️ RC8 champion snapshot: {exc}', flush=True)
+        old=[]
+    incumbents=_persistent_champions_by_cell(old)
+
     promotions = _engine.analyze_findings(rows)
-    current_keys={str(p.get('candidate_key') or '') for p in promotions}
+    newly_demoted=_explicitly_demoted_roots(promotions)
+    incumbents={cid:r for cid,r in incumbents.items() if _lineage_root(r) not in newly_demoted}
+
+    # If a cell is empty, choose ONE best new validated specialist as incumbent;
+    # all other validated candidates remain challengers. No gate is lowered.
+    new_shadow_winner={}
     for p in promotions:
+        meta=p.get('meta') or {}; cid=str(meta.get('coverage_cell_id') or '')
+        if not cid or str(p.get('stage') or '').upper() not in _SHADOW_STAGES:
+            continue
+        prev=new_shadow_winner.get(cid)
+        if prev is None or _champion_score(p)>_champion_score(prev):
+            new_shadow_winner[cid]=p
+
+    current_keys=set()
+    now=utc_now()
+    for p in promotions:
+        key=_candidate_key(p)
+        if key:
+            current_keys.add(key)
         meta=dict(p.get('meta') or {})
+        cid=str(meta.get('coverage_cell_id') or '')
+        root=_lineage_root(p)
+        stage=str(p.get('stage') or '').upper()
+        incumbent=incumbents.get(cid) if cid else None
+        incumbent_root=_lineage_root(incumbent) if incumbent else ''
+
+        if stage in _SHADOW_STAGES and cid:
+            if incumbent:
+                if root == incumbent_root:
+                    meta['champion_role']='INCUMBENT'
+                    meta['champion_lineage_key']=incumbent_root
+                    meta['champion_since']=((incumbent.get('meta') or {}).get('champion_since') or incumbent.get('updated_at') or now)
+                else:
+                    meta['champion_role']='CHALLENGER'
+                    meta['incumbent_candidate_key']=incumbent_root
+                    meta['incumbent_strategy_family']=(incumbent.get('meta') or {}).get('causal_strategy_family')
+            elif new_shadow_winner.get(cid) is p:
+                meta['champion_role']='INCUMBENT'
+                meta['champion_lineage_key']=root
+                meta['champion_since']=now
+                incumbents[cid]=p
+            else:
+                winner=new_shadow_winner.get(cid)
+                meta['champion_role']='CHALLENGER'
+                if winner:
+                    meta['incumbent_candidate_key']=_lineage_root(winner)
+        elif str(p.get('experiment') or '') in _RETEST_EXPERIMENTS and stage=='REJECTED_OOS':
+            original=str(meta.get('original_candidate_key') or '')
+            if original and original == incumbent_root:
+                meta['champion_role']='DEGRADED'
+                meta['champion_degraded']=True
+                meta['champion_degraded_at']=now
+
         meta.update({'is_current':True,'validation_run_id':run_id})
         p['meta']=meta
+
     if promotions:
         central.upsert('research_promotions_v1', promotions, on_conflict='candidate_key')
-    try:
-        old=central.select('research_promotions_v1', params={
-            'select':'candidate_key,meta,research_version',
-            'research_version':f'eq.{config.VERSION}',
-            'limit':'500',
+
+    # Preserve one non-degraded incumbent per cell even if the current search
+    # batch did not regenerate it. This is the key accumulation guarantee.
+    for cid,item in incumbents.items():
+        key=_candidate_key(item)
+        if not key or _lineage_root(item) in newly_demoted:
+            continue
+        current_keys.add(key)
+        old_meta=dict(item.get('meta') or {})
+        patched=dict(old_meta)
+        patched.update({
+            'is_current':True,
+            'champion_role':'INCUMBENT',
+            'champion_lineage_key':_lineage_root(item),
+            'champion_since':old_meta.get('champion_since') or item.get('updated_at') or now,
+            'last_champion_validation_run_id':run_id,
         })
+        # Avoid needless DB churn; only patch when the semantic metadata changes.
+        if patched != old_meta:
+            try:
+                central.patch('research_promotions_v1', {'meta':patched}, filters={'candidate_key':f'eq.{key}'})
+            except Exception as exc:
+                print(f'⚠️ RC8 preserve champion {cid}: {exc}', flush=True)
+
+    # Everything else not emitted/preserved may become stale. A Challenger can
+    # disappear; an incumbent cannot disappear unless its own lineage degraded.
+    try:
         for item in old:
-            key=str(item.get('candidate_key') or '')
+            key=_candidate_key(item)
             if not key or key in current_keys:
                 continue
             meta=dict(item.get('meta') or {})
@@ -589,38 +750,33 @@ def _causal_retest_promotions_for_engine(engine: str):
 
 
 def _priority_cells_for_engine(engine: str):
-    """Put uncovered/unvalidated cells first when RAM/time is scarce."""
+    """Prioritize only genuinely unfilled/degraded cells, never healthy Champions."""
     try:
-        rows=central.select('research_promotions_v1', params={
-            'select':'source_engine,stage,meta,research_version,updated_at',
+        rows=central.paged_select('research_promotions_v1', params={
+            'select':'candidate_key,source_engine,experiment,stage,scope,metrics,meta,research_version,updated_at',
             'source_engine':f'eq.{engine}',
             'research_version':f'eq.{config.VERSION}',
-            'order':'updated_at.desc','limit':'300',
-        })
+            'order':'updated_at.desc',
+        }, max_rows=1800, page_size=300)
     except Exception:
         return set()
-    seen=set(); priority=set()
-    for row in rows or []:
-        meta=row.get('meta') or {}; cid=str(meta.get('coverage_cell_id') or '')
-        if not cid or cid in seen or meta.get('is_current') is False:
-            continue
-        seen.add(cid)
-        if str(row.get('stage') or '').upper() not in {'SHADOW_READY','SHADOW_READY_FAST'}:
-            priority.add(cid)
-    # Cells with no promotion row are naturally missing from seen and are
-    # prioritized too.
+    champions=_persistent_champions_by_cell(rows)
+    filled=set(champions)
+    priority=set()
     for cell in all_coverage_cells():
-        if owner_for_cell(cell)==str(engine).lower() and coverage_cell_id(cell) not in seen:
-            priority.add(coverage_cell_id(cell))
+        if owner_for_cell(cell)!=str(engine).lower():
+            continue
+        cid=coverage_cell_id(cell)
+        if cid not in filled:
+            priority.add(cid)
     return priority
 
 
 def _bootstrap_status(engine: str | None = None):
-    """RC5 fast-search status: a cell completes only at Shadow-ready.
+    """Fast-search continues only for cells without a persistent Champion.
 
-    Merely having Final OOS data is no longer enough to slow Research. The
-    accelerated loop continues for every active market×symbol×TF until
-    Validation has a current SHADOW_READY/SHADOW_READY_FAST specialist.
+    A later weak Challenger does not reopen an already filled cell. A cell is
+    reopened only after explicit negative retest evidence on its incumbent.
     """
     owner = str(engine or config.ENGINE).lower()
     expected = [c for c in all_coverage_cells() if owner == "validation" or owner_for_cell(c) == owner]
@@ -629,24 +785,14 @@ def _bootstrap_status(engine: str | None = None):
         return {"expected":0,"complete":0,"pending_ids":set()}
     try:
         rows=central.paged_select('research_promotions_v1',params={
-            'select':'stage,meta,research_version,updated_at,source_engine',
+            'select':'candidate_key,source_engine,experiment,stage,scope,metrics,meta,research_version,updated_at',
             'research_version':f'eq.{config.VERSION}','order':'updated_at.desc',
-        },max_rows=1600,page_size=300)
+        },max_rows=2400,page_size=300)
     except Exception as exc:
         print(f'⚠️ bootstrap status: {exc}',flush=True)
         return {"expected":len(expected_ids),"complete":0,"pending_ids":expected_ids,"read_error":True}
-    complete=set(); seen=set()
-    # Rows arrive newest first. Only the newest current state for each cell can
-    # satisfy bootstrap. An old SHADOW_READY must never hide a later downgrade
-    # to VALIDATION_REQUIRED/REJECTED_OOS.
-    for row in rows or []:
-        meta=row.get('meta') or {}
-        if meta.get('is_current') is False or str(row.get('stage') or '').upper()=='STALE': continue
-        cid=str(meta.get('coverage_cell_id') or '')
-        if cid not in expected_ids or cid in seen: continue
-        seen.add(cid)
-        if str(row.get('stage') or '').upper() in {'SHADOW_READY','SHADOW_READY_FAST'}:
-            complete.add(cid)
+    champions=_persistent_champions_by_cell(rows)
+    complete={cid for cid in champions if cid in expected_ids}
     return {"expected":len(expected_ids),"complete":len(complete),"pending_ids":expected_ids-complete}
 
 

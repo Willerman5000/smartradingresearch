@@ -20,4 +20,4 @@ def test_workers_keep_all_active_v1_cells():
 
 def test_version_marks_rc2():
     cfg=(ROOT/'config.py').read_text(encoding='utf-8')
-    assert 'RFV1_11_FINAL_RC42_46CELL_20260914' in cfg
+    assert 'RFV1_12_RC5_ITERATIVE_EDGE_46CELL_20260915' in cfg

@@ -6,7 +6,7 @@ ROOT=Path(__file__).resolve().parent
 def test_version_and_matrix_contract():
     cfg=(ROOT/'config.py').read_text(encoding='utf-8')
     cov=(ROOT/'coverage_optimizer.py').read_text(encoding='utf-8')
-    assert 'RFV1_11_FINAL_RC42_46CELL_20260914' in cfg
+    assert 'RFV1_12_RC5_ITERATIVE_EDGE_46CELL_20260915' in cfg
     assert 'CAUSAL_REQUIRED_CELLS = 46' in cfg
     assert 'def all_coverage_cells' in cov
     tree=ast.parse(cov)
