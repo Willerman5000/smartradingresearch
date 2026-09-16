@@ -30,6 +30,27 @@ class RestDB:
         self._read_circuit_until = 0.0
         self._transient_failures = 0
 
+        # RC8 FREE-PLAN: presupuesto diario de egress por proceso Research.
+        # El plan Free de Supabase comparte 5 GB/mes de egress no cacheado en
+        # toda la organización. Cada uno de los cinco motores tiene un límite
+        # conservador para que un bug o una consulta demasiado grande no vuelva
+        # a consumir la cuota completa.
+        try:
+            _os = __import__('os')
+            daily_mb = float(_os.getenv('RESEARCH_EGRESS_DAILY_MB', '10') or 10)
+            free_plan_mode = str(_os.getenv('RESEARCH_FREE_PLAN_MODE', '1') or '1').strip().lower() not in {'0','false','no','off'}
+        except Exception:
+            daily_mb = 10.0
+            free_plan_mode = True
+        # Incluso si Render conserva una variable antigua (p.ej. 18 MB/día),
+        # FREE_PLAN_MODE impone el techo conservador de 10 MB/día/servicio.
+        if free_plan_mode:
+            daily_mb = min(daily_mb, 10.0)
+        self._egress_daily_limit_bytes = max(4.0, min(64.0, daily_mb)) * 1024 * 1024
+        self._egress_lock = threading.Lock()
+        self._egress_day = datetime.now(timezone.utc).date().isoformat()
+        self._egress_bytes_today = 0
+
     @property
     def ready(self) -> bool:
         return bool(self.url and self.key)
@@ -58,6 +79,43 @@ class RestDB:
             if self._transient_failures >= 2:
                 self._read_circuit_until = time.monotonic() + 15.0
 
+    def _roll_egress_day(self) -> None:
+        today = datetime.now(timezone.utc).date().isoformat()
+        with self._egress_lock:
+            if self._egress_day != today:
+                self._egress_day = today
+                self._egress_bytes_today = 0
+
+    def _record_egress(self, response) -> None:
+        self._roll_egress_day()
+        try:
+            size = len(response.content or b"")
+        except Exception:
+            try:
+                size = int(response.headers.get("content-length") or 0)
+            except Exception:
+                size = 0
+        with self._egress_lock:
+            self._egress_bytes_today += max(0, int(size or 0))
+
+    def egress_stats(self) -> Dict[str, Any]:
+        self._roll_egress_day()
+        with self._egress_lock:
+            used = int(self._egress_bytes_today)
+            limit = int(self._egress_daily_limit_bytes)
+            day = self._egress_day
+        return {
+            "day_utc": day,
+            "bytes": used,
+            "mb": round(used / (1024 * 1024), 3),
+            "limit_mb": round(limit / (1024 * 1024), 1),
+            "ratio": round((used / limit), 4) if limit > 0 else 0.0,
+            "guard_open": bool(limit > 0 and used >= limit),
+        }
+
+    def egress_guard_open(self) -> bool:
+        return bool(self.egress_stats().get("guard_open"))
+
     def select(self, table: str, *, params: Optional[Dict[str, str]] = None,
                headers: Optional[Dict[str, str]] = None, timeout: Optional[float] = None,
                retries: int = 1) -> List[Dict[str, Any]]:
@@ -65,6 +123,8 @@ class RestDB:
             raise RuntimeError("Supabase no configurado")
         if self._read_circuit_open():
             raise RuntimeError("SUPABASE_READ_CIRCUIT_OPEN")
+        if self.egress_guard_open():
+            raise RuntimeError("SUPABASE_EGRESS_GUARD_OPEN")
         last = None
         for attempt in range(max(0, int(retries)) + 1):
             try:
@@ -78,6 +138,7 @@ class RestDB:
                 ctype = str(r.headers.get("content-type") or "").lower()
                 if "json" not in ctype:
                     raise ValueError(f"Supabase devolvió contenido no JSON ({ctype or 'sin content-type'})")
+                self._record_egress(r)
                 data = r.json()
                 self._read_success()
                 return data if isinstance(data, list) else []

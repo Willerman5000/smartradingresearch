@@ -43,7 +43,14 @@ _state = {
 # small stale-while-revalidate cache keeps the operator page usable during a
 # 520/522 while Research itself remains fail-closed for authority.
 _DASHBOARD_CACHE = {'lock': threading.Lock(), 'rows': [], 'ts': 0.0, 'refreshing': False, 'error': None}
-_DASHBOARD_CACHE_TTL = max(60, int(os.getenv('DASHBOARD_CACHE_SECONDS', '180') or 180))
+_DASHBOARD_CACHE_TTL = max(300, int(os.getenv('DASHBOARD_CACHE_SECONDS', '900') or 900))
+
+# RC8 FREE-PLAN: el replay causal Fast-5 NO se ralentiza. Lo que se desacopla
+# es la descarga repetida del dataset observacional desde Supabase. Cada motor
+# conserva su última ventana en RAM y usa dos watermarks diminutos para saber
+# si realmente apareció una señal/resultado nuevo.
+_SOURCE_CACHE = {'lock': threading.Lock(), 'rows': [], 'ts': 0.0, 'watermark': None, 'error': None}
+_VALIDATION_WATERMARK = {'lock': threading.Lock(), 'value': None}
 
 
 def _auth_ok() -> bool:
@@ -74,7 +81,7 @@ def _source_row_in_active_contract(row) -> bool:
     return False
 
 
-def _source_rows(days: int, max_rows: int):
+def _source_rows_full(days: int, max_rows: int):
     """Read a bounded but timeframe-balanced source window.
 
     A single newest-first global LIMIT can be dominated by intraday Futures and
@@ -133,6 +140,76 @@ def _source_rows(days: int, max_rows: int):
     rows = [r for r in selected.values() if _source_row_in_active_contract(r)]
     rows.sort(key=lambda r: (str(r.get('created_at') or ''), str(r.get('id') or '')))
     return rows
+
+
+def _latest_marker(table: str, select: str, *, extra: dict | None = None) -> str:
+    params = {'select': select, 'order': 'created_at.desc', 'limit': '1'}
+    if extra:
+        params.update(extra)
+    rows = central.select(table, params=params, timeout=4, retries=0)
+    if not rows:
+        return '-'
+    row = rows[0] or {}
+    return '|'.join(str(row.get(k) or '') for k in select.split(','))
+
+
+def _source_watermark() -> str:
+    """Tiny egress check: changed signal/result => observational source may refresh."""
+    signal = _latest_marker('signals', 'id,created_at,status')
+    result = _latest_marker('signal_results', 'signal_id,created_at,status')
+    return hashlib.sha256(f'{signal}::{result}'.encode('utf-8')).hexdigest()[:20]
+
+
+def _source_rows(days: int, max_rows: int):
+    """Free-plan source cache.
+
+    Fast-5 still executes causal market replay/search. The large Supabase
+    observational dataset is refreshed only when evidence changed and at most
+    after the configured minimum cadence. This avoids downloading the same JSON
+    window dozens of times per hour across five Research services.
+    """
+    now = time.monotonic()
+    min_age = max(15, int(getattr(config, 'OBSERVATIONAL_MIN_REFRESH_MINUTES', 60))) * 60
+    max_age = max(min_age, int(getattr(config, 'OBSERVATIONAL_MAX_REFRESH_MINUTES', 240)) * 60)
+
+    with _SOURCE_CACHE['lock']:
+        cached = list(_SOURCE_CACHE['rows'])
+        age = now - float(_SOURCE_CACHE['ts'] or 0.0) if _SOURCE_CACHE['ts'] else None
+        previous_wm = _SOURCE_CACHE.get('watermark')
+
+    if cached and age is not None and age < min_age:
+        return cached
+
+    # When the daily egress guard is near/over budget, preserve the latest
+    # usable evidence instead of spending the remaining quota re-downloading it.
+    try:
+        stats = central.egress_stats()
+        if cached and float(stats.get('ratio') or 0.0) >= 0.80 and age is not None and age < max_age:
+            return cached
+    except Exception:
+        pass
+
+    try:
+        watermark = _source_watermark()
+    except Exception as exc:
+        with _SOURCE_CACHE['lock']:
+            _SOURCE_CACHE['error'] = f'{type(exc).__name__}: {str(exc)[:160]}'
+        if cached:
+            return cached
+        raise
+
+    if cached and previous_wm == watermark and age is not None and age < max_age:
+        return cached
+
+    fresh = _source_rows_full(days, max_rows)
+    with _SOURCE_CACHE['lock']:
+        _SOURCE_CACHE.update(
+            rows=list(fresh),
+            ts=now,
+            watermark=watermark,
+            error=None,
+        )
+    return fresh
 
 
 
@@ -507,28 +584,69 @@ def _best_causal_per_cell(rows):
 
 
 def _load_dashboard_rows_uncached():
-    """Bounded DB read. Dashboard queries use a short timeout by design."""
-    limit = int(getattr(config, 'DASHBOARD_MAX_ROWS', 120))
-    fetch_limit = min(700 if config.ENGINE == 'validation' else 300, max(limit * (5 if config.ENGINE == 'validation' else 2), limit))
+    """Compact observability read designed for Supabase Free egress.
+
+    Validation needs the 46 causal cells plus a small diagnostic tail, not
+    hundreds of historical challenger JSON payloads. Evidence engines need only
+    their newest current rows. This endpoint never grants authority.
+    """
+    limit = int(getattr(config, 'DASHBOARD_MAX_ROWS', 100))
+    fields = 'candidate_key,source_engine,experiment,stage,reason,scope,metrics,meta,research_version,updated_at'
+
     if config.ENGINE == 'validation':
-        raw = central.select('research_promotions_v1', params={
-            'select': 'candidate_key,source_engine,experiment,stage,reason,scope,metrics,meta,research_version,updated_at',
-            'research_version': f'eq.{config.VERSION}', 'order': 'updated_at.desc', 'limit': str(fetch_limit),
+        causal_raw = central.select('research_promotions_v1', params={
+            'select': fields,
+            'research_version': f'eq.{config.VERSION}',
+            'experiment': 'in.(CAUSAL_COVERAGE_STRATEGY,CAUSAL_REGISTRY_RETEST,CAUSAL_SHADOW_RECYCLE)',
+            'stage': 'neq.STALE',
+            'order': 'updated_at.desc',
+            'limit': '260',
         }, timeout=6, retries=0)
-    else:
-        raw = central.select('research_findings_v1', params={
-            'select': 'feature_key,engine,experiment,stage,scope,metrics,meta,research_version,updated_at',
-            'engine': f'eq.{config.ENGINE}', 'research_version': f'eq.{config.VERSION}',
-            'order': 'updated_at.desc', 'limit': str(fetch_limit),
-        }, timeout=6, retries=0)
-    current = [r for r in raw if (r.get('meta') or {}).get('is_current') is True and str(r.get('stage') or '') != 'STALE']
-    if config.ENGINE == 'validation':
-        causal_all=[r for r in current if str(r.get('experiment') or '') in {'CAUSAL_COVERAGE_STRATEGY','CAUSAL_REGISTRY_RETEST','CAUSAL_SHADOW_RECYCLE'}]
-        causal=_best_causal_per_cell(causal_all)
-        rest=[r for r in current if r not in causal_all and _row_in_active_contract(r)]
+        causal_current = [
+            r for r in causal_raw
+            if (r.get('meta') or {}).get('is_current') is not False
+        ]
+        causal = _best_causal_per_cell(causal_current)
         causal.sort(key=lambda r: str(((r.get('meta') or {}).get('coverage_cell_id') or '')))
-        remaining=max(0, limit-len(causal))
-        return causal[:limit] + balanced_current_rows(rest, remaining)
+
+        # Keep a small tail of non-causal diagnostics for transparency. This is
+        # intentionally bounded because the full laboratory history remains in
+        # Supabase and does not belong in every browser refresh.
+        diagnostic_raw = central.select('research_promotions_v1', params={
+            'select': fields,
+            'research_version': f'eq.{config.VERSION}',
+            'stage': 'in.(OBSERVE,VALIDATION_REQUIRED,REJECTED_OOS,VALIDATED_SINGLE_ASSET,SHADOW_READY,SHADOW_READY_FAST)',
+            'order': 'updated_at.desc',
+            'limit': '80',
+        }, timeout=6, retries=0)
+        causal_keys = {
+            str(r.get('candidate_key') or '')
+            for r in causal_current
+            if str(r.get('candidate_key') or '')
+        }
+        diagnostics = [
+            r for r in diagnostic_raw
+            if str(r.get('candidate_key') or '') not in causal_keys
+            and (r.get('meta') or {}).get('is_current') is not False
+            and _row_in_active_contract(r)
+        ]
+        remaining = max(0, limit - len(causal))
+        return causal[:limit] + balanced_current_rows(diagnostics, remaining)
+
+    fields = 'feature_key,engine,experiment,stage,scope,metrics,meta,research_version,updated_at'
+    fetch_limit = min(220, max(100, limit * 2))
+    raw = central.select('research_findings_v1', params={
+        'select': fields,
+        'engine': f'eq.{config.ENGINE}',
+        'research_version': f'eq.{config.VERSION}',
+        'stage': 'neq.STALE',
+        'order': 'updated_at.desc',
+        'limit': str(fetch_limit),
+    }, timeout=6, retries=0)
+    current = [
+        r for r in raw
+        if (r.get('meta') or {}).get('is_current') is True
+    ]
     return balanced_current_rows(current, limit)
 
 
@@ -655,20 +773,26 @@ def _markdown_report(items):
 
 
 def _current_causal_cell_ids():
+    """Tiny coverage read used by Validation rescue.
+
+    Only active causal rows are relevant; downloading historical/stale findings
+    here was one of the largest avoidable Free-plan egress costs.
+    """
     try:
         rows=central.paged_select('research_findings_v1', params={
             'select':'feature_key,engine,experiment,meta,research_version,stage,updated_at',
             'research_version':f'eq.{config.VERSION}',
-            'experiment':'eq.CAUSAL_COVERAGE_STRATEGY',
+            'experiment':'in.(CAUSAL_COVERAGE_STRATEGY,CAUSAL_REGISTRY_RETEST,CAUSAL_SHADOW_RECYCLE)',
+            'stage':'neq.STALE',
             'order':'updated_at.desc',
-        }, max_rows=1200, page_size=300)
+        }, max_rows=280, page_size=140)
     except Exception as exc:
         print(f'⚠️ causal coverage unavailable: {exc}', flush=True)
         return None
     out=set()
     for row in rows or []:
         meta=row.get('meta') or {}
-        if meta.get('is_current') is False or str(row.get('stage') or '') == 'STALE':
+        if meta.get('is_current') is False:
             continue
         cid=str(meta.get('coverage_cell_id') or '')
         if cid:
@@ -706,6 +830,20 @@ def _rescue_missing_causal_cells(run_id: str):
     return done
 
 
+def _validation_input_watermark() -> str:
+    """Small change detector for the expensive Validation join."""
+    parts=[]
+    for table, extra in (
+        ('research_findings_v1', {'research_version': f'eq.{config.VERSION}'}),
+        ('research_shadow_live_metrics_v1', {}),
+    ):
+        params={'select':'updated_at','order':'updated_at.desc','limit':'1'}
+        params.update(extra)
+        rows=central.select(table, params=params, timeout=4, retries=0)
+        parts.append(str((rows[0] or {}).get('updated_at') or '-') if rows else '-')
+    return hashlib.sha256('::'.join(parts).encode('utf-8')).hexdigest()[:20]
+
+
 def _run_validation(run_id: str):
     """Validate challengers without erasing an already proven cell Champion.
 
@@ -713,21 +851,39 @@ def _run_validation(run_id: str):
     incumbent. New generations are Challengers. The cell becomes unfilled only
     after explicit negative evidence on the incumbent lineage itself.
     """
-    _rescue_missing_causal_cells(run_id)
+    rescued = _rescue_missing_causal_cells(run_id)
+
+    # Fast-5 checks a tiny watermark first. If neither Research findings nor
+    # Shadow outcomes changed and rescue produced nothing, there is nothing new
+    # to validate; skip the multi-table download entirely.
+    try:
+        input_wm = _validation_input_watermark()
+        with _VALIDATION_WATERMARK['lock']:
+            previous_wm = _VALIDATION_WATERMARK.get('value')
+        if rescued <= 0 and previous_wm and previous_wm == input_wm:
+            print('🪶 [validation] sin evidencia nueva; validación pesada omitida (Free egress)', flush=True)
+            return 0, 0
+    except Exception:
+        input_wm = None
+
     raw = central.paged_select('research_findings_v1', params={
         'select':'engine,experiment,feature_key,scope,stage,metrics,meta,research_version,updated_at',
         'research_version':f'eq.{config.VERSION}',
+        'stage':'neq.STALE',
         'order':'updated_at.desc',
-    }, max_rows=6000, page_size=600)
-    rows=[r for r in raw if (r.get('meta') or {}).get('is_current') is True and str(r.get('stage') or '')!='STALE']
+    }, max_rows=2400, page_size=240)
+    rows=[r for r in raw if (r.get('meta') or {}).get('is_current') is True]
 
-    # Snapshot incumbents BEFORE analyzing the new challenger batch.
+    # Snapshot incumbents/current challengers BEFORE analyzing the new batch.
+    # 800 bounded rows are enough for the 46 active cells and avoid the former
+    # 5,000-row JSON transfer on every Validation cycle.
     try:
         old = central.paged_select('research_promotions_v1', params={
             'select':'candidate_key,source_engine,experiment,stage,authority,reason,scope,metrics,meta,research_version,updated_at',
             'research_version':f'eq.{config.VERSION}',
+            'stage':'neq.STALE',
             'order':'updated_at.desc',
-        }, max_rows=5000, page_size=500)
+        }, max_rows=800, page_size=200)
     except Exception as exc:
         print(f'⚠️ RC8 champion snapshot: {exc}', flush=True)
         old=[]
@@ -830,6 +986,9 @@ def _run_validation(run_id: str):
             central.patch('research_promotions_v1', {'stage':'STALE','meta':meta,'updated_at':utc_now()}, filters={'candidate_key':f'eq.{key}'})
     except Exception as exc:
         print(f'⚠️ stale promotions: {exc}', flush=True)
+    if input_wm:
+        with _VALIDATION_WATERMARK['lock']:
+            _VALIDATION_WATERMARK['value'] = input_wm
     return len(rows), len(promotions)
 
 
@@ -851,12 +1010,12 @@ def _causal_retest_promotions_for_engine(engine: str):
                     'select':('candidate_key,resolved_n,signals_n,expectancy_r,profit_factor,updated_at,'
                               'recent8_n,recent8_expectancy_r,recent8_profit_factor,recent8_trade_sharpe,'
                               'previous8_n,previous8_expectancy_r,previous8_trade_sharpe,current_loss_streak'),
-                    'order':'updated_at.desc','limit':'500',
+                    'order':'updated_at.desc','limit':'180',
                 }, timeout=6, retries=0)
             except Exception:
                 shadow=central.select('research_shadow_live_metrics_v1', params={
                     'select':'candidate_key,resolved_n,signals_n,expectancy_r,profit_factor,updated_at',
-                    'order':'updated_at.desc','limit':'500',
+                    'order':'updated_at.desc','limit':'180',
                 }, timeout=5, retries=0)
         except Exception:
             shadow=[]
@@ -903,14 +1062,19 @@ def _causal_retest_promotions_for_engine(engine: str):
 
 
 def _priority_cells_for_engine(engine: str):
-    """Prioritize only genuinely unfilled/degraded cells, never healthy Champions."""
+    """Prioritize only genuinely unfilled/degraded cells, never healthy Champions.
+
+    FREE-PLAN: only Shadow-ready incumbents are needed to know which cells are
+    already filled. Do not download every rejected/observational promotion.
+    """
     try:
         rows=central.paged_select('research_promotions_v1', params={
             'select':'candidate_key,source_engine,experiment,stage,scope,metrics,meta,research_version,updated_at',
             'source_engine':f'eq.{engine}',
             'research_version':f'eq.{config.VERSION}',
+            'stage':'in.(SHADOW_READY,SHADOW_READY_FAST)',
             'order':'updated_at.desc',
-        }, max_rows=1800, page_size=300)
+        }, max_rows=320, page_size=160)
     except Exception:
         return set()
     champions=_persistent_champions_by_cell(rows)
@@ -928,25 +1092,50 @@ def _priority_cells_for_engine(engine: str):
 def _bootstrap_status(engine: str | None = None):
     """Fast-search continues only for cells without a persistent Champion.
 
-    A later weak Challenger does not reopen an already filled cell. A cell is
-    reopened only after explicit negative retest evidence on its incumbent.
+    FREE-PLAN: this 5-minute check must be tiny. We only fetch potential
+    incumbents (SHADOW_READY*) instead of thousands of challenger rows.
     """
     owner = str(engine or config.ENGINE).lower()
     expected = [c for c in all_coverage_cells() if owner == "validation" or owner_for_cell(c) == owner]
     expected_ids = {coverage_cell_id(c) for c in expected}
     if not expected_ids:
         return {"expected":0,"complete":0,"pending_ids":set()}
+    params={
+        'select':'candidate_key,source_engine,experiment,stage,scope,metrics,meta,research_version,updated_at',
+        'research_version':f'eq.{config.VERSION}',
+        'stage':'in.(SHADOW_READY,SHADOW_READY_FAST)',
+        'order':'updated_at.desc',
+    }
+    if owner != 'validation':
+        params['source_engine']=f'eq.{owner}'
     try:
-        rows=central.paged_select('research_promotions_v1',params={
-            'select':'candidate_key,source_engine,experiment,stage,scope,metrics,meta,research_version,updated_at',
-            'research_version':f'eq.{config.VERSION}','order':'updated_at.desc',
-        },max_rows=2400,page_size=300)
+        rows=central.paged_select(
+            'research_promotions_v1',
+            params=params,
+            max_rows=520 if owner == 'validation' else 220,
+            page_size=130,
+        )
     except Exception as exc:
-        print(f'⚠️ bootstrap status: {exc}',flush=True)
-        return {"expected":len(expected_ids),"complete":None,"pending_ids":set(),"read_error":True,"error":str(exc)[:180]}
+        msg=str(exc)
+        print(f'⚠️ bootstrap status: {msg}',flush=True)
+        # Reaching the local Free-plan egress guard is not a provider outage.
+        # Evidence engines may continue causal Fast-5 using the last known
+        # pending-cell set because causal market data comes from the exchange,
+        # not Supabase. Validation still pauses because it requires DB evidence.
+        cached=set(_state.get('bootstrap_pending_ids_cached') or [])
+        if 'SUPABASE_EGRESS_GUARD_OPEN' in msg and owner != 'validation' and cached:
+            return {
+                "expected":len(expected_ids),
+                "complete":len(expected_ids-cached),
+                "pending_ids":cached,
+                "egress_guard":True,
+            }
+        return {"expected":len(expected_ids),"complete":None,"pending_ids":set(),"read_error":True,"error":msg[:180]}
     champions=_persistent_champions_by_cell(rows)
     complete={cid for cid in champions if cid in expected_ids}
-    return {"expected":len(expected_ids),"complete":len(complete),"pending_ids":expected_ids-complete}
+    pending=expected_ids-complete
+    _state['bootstrap_pending_ids_cached']=sorted(pending)
+    return {"expected":len(expected_ids),"complete":len(complete),"pending_ids":pending}
 
 
 def _bootstrap_interval_minutes():
@@ -964,6 +1153,9 @@ def _bootstrap_interval_minutes():
     _state['infra_degraded']=False
     _state['infra_last_error']=None
     pending=set(status.get('pending_ids') or set())
+    if status.get('egress_guard'):
+        _state['infra_degraded']=False
+        _state['bootstrap_mode']='BOOTSTRAP_FAST_EGRESS_GUARD'
     count=len(pending)
     _state['bootstrap_pending']=count
     if count <= 0:
@@ -987,6 +1179,9 @@ def _bootstrap_interval_minutes():
     if pressure:
         mode='BOOTSTRAP_BACKOFF'
         minutes=int(getattr(config, 'BOOTSTRAP_BACKOFF_MINUTES', 60))
+    elif status.get('egress_guard'):
+        mode='BOOTSTRAP_FAST_EGRESS_GUARD'
+        minutes=int(getattr(config, 'BOOTSTRAP_FAST_MINUTES', 5))
     else:
         mode='BOOTSTRAP_FAST'
         minutes=int(getattr(config, 'BOOTSTRAP_FAST_MINUTES', 5))
@@ -1114,6 +1309,7 @@ def health():
         'infra_degraded': bool(_state.get('infra_degraded')),
         'infra_last_error': _state.get('infra_last_error'),
         'causal_cache': causal_cache_stats(),
+        'supabase_egress_today': central.egress_stats(),
     })
 
 

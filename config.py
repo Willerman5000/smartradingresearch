@@ -35,8 +35,8 @@ RUN_TOKEN = str(os.getenv("RESEARCH_RUN_TOKEN", "")).strip()
 # keeps ~70-90 MB headroom for Gunicorn/requests/JSON/GC spikes.
 MEMORY_HARD_MB = _int("RESEARCH_MEMORY_HARD_MB", 430, 192, 460)
 CAUSAL_MEMORY_TARGET_MB = _int("RESEARCH_CAUSAL_MEMORY_TARGET_MB", 390, 160, MEMORY_HARD_MB)
-MAX_SOURCE_ROWS = _int("RESEARCH_MAX_SOURCE_ROWS", 5000, 200, 20000)
-PAGE_SIZE = _int("RESEARCH_PAGE_SIZE", 400, 50, 1000)
+MAX_SOURCE_ROWS = _int("RESEARCH_MAX_SOURCE_ROWS", 1200, 200, 5000)
+PAGE_SIZE = _int("RESEARCH_PAGE_SIZE", 200, 50, 500)
 WINDOW_DAYS = _int("RESEARCH_WINDOW_DAYS", 180, 30, 730)
 FINDING_LIMIT = _int("RESEARCH_FINDING_LIMIT", 180, 20, 500)
 AUTO_RUN = _bool("RESEARCH_AUTO_RUN", True)
@@ -58,6 +58,15 @@ SCHEDULER_POLICY_VERSION = "RC7_FAST5_PRESERVE_CHAMPIONS"
 RELEASE_LABEL = "V1 · ITERATIVE EDGE"
 VALID_ENGINES = {"execution", "risk", "strategy", "traders", "validation"}
 DASHBOARD_MAX_ROWS = _int("RESEARCH_DASHBOARD_MAX_ROWS", 180, 20, 300)
+# RC8 FREE-PLAN — Fast-5 sigue buscando Alpha, pero las lecturas pesadas de
+# evidencia observacional se desacoplan. Cada ciclo puede comprobar watermarks
+# pequeños; sólo refresca el dataset grande si realmente cambió y pasó el
+# intervalo mínimo. Esto protege los 5 GB/mes de egress sin ralentizar el replay
+# causal de las celdas pendientes.
+FREE_PLAN_MODE = _bool("RESEARCH_FREE_PLAN_MODE", True)
+OBSERVATIONAL_MIN_REFRESH_MINUTES = _int("RESEARCH_OBSERVATIONAL_MIN_REFRESH_MINUTES", 60, 15, 720)
+OBSERVATIONAL_MAX_REFRESH_MINUTES = _int("RESEARCH_OBSERVATIONAL_MAX_REFRESH_MINUTES", 240, 60, 1440)
+EGRESS_DAILY_MB = min(_int("RESEARCH_EGRESS_DAILY_MB", 10, 4, 64), 10) if FREE_PLAN_MODE else _int("RESEARCH_EGRESS_DAILY_MB", 10, 4, 64)
 
 MIN_NET_EVIDENCE_PCT = _int("RESEARCH_MIN_NET_EVIDENCE_PCT", 80, 0, 100)
 WALK_FORWARD_FOLDS = _int("RESEARCH_WALK_FORWARD_FOLDS", 3, 2, 6)

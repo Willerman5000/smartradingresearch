@@ -15,6 +15,20 @@ services:
         value: 90
       - key: RESEARCH_BOOTSTRAP_FAST_MINUTES
         value: 5
+      - key: RESEARCH_FREE_PLAN_MODE
+        value: 1
+      - key: RESEARCH_MAX_SOURCE_ROWS
+        value: 1200
+      - key: RESEARCH_PAGE_SIZE
+        value: 200
+      - key: RESEARCH_OBSERVATIONAL_MIN_REFRESH_MINUTES
+        value: 60
+      - key: RESEARCH_OBSERVATIONAL_MAX_REFRESH_MINUTES
+        value: 240
+      - key: RESEARCH_EGRESS_DAILY_MB
+        value: 10
+      - key: DASHBOARD_CACHE_SECONDS
+        value: 900
       - key: RESEARCH_BOOT_DELAY_SECONDS
         value: 45
       - key: RESEARCH_MEMORY_HARD_MB
@@ -36,7 +50,7 @@ services:
       - key: RESEARCH_RUN_TOKEN
         sync: false
       - key: RESEARCH_DASHBOARD_MAX_ROWS
-        value: 180
+        value: 100
 
   - type: web
     name: research-risk
@@ -54,6 +68,20 @@ services:
         value: 120
       - key: RESEARCH_BOOTSTRAP_FAST_MINUTES
         value: 5
+      - key: RESEARCH_FREE_PLAN_MODE
+        value: 1
+      - key: RESEARCH_MAX_SOURCE_ROWS
+        value: 1200
+      - key: RESEARCH_PAGE_SIZE
+        value: 200
+      - key: RESEARCH_OBSERVATIONAL_MIN_REFRESH_MINUTES
+        value: 60
+      - key: RESEARCH_OBSERVATIONAL_MAX_REFRESH_MINUTES
+        value: 240
+      - key: RESEARCH_EGRESS_DAILY_MB
+        value: 10
+      - key: DASHBOARD_CACHE_SECONDS
+        value: 900
       - key: RESEARCH_BOOT_DELAY_SECONDS
         value: 75
       - key: RESEARCH_MEMORY_HARD_MB
@@ -75,7 +103,7 @@ services:
       - key: RESEARCH_RUN_TOKEN
         sync: false
       - key: RESEARCH_DASHBOARD_MAX_ROWS
-        value: 180
+        value: 100
 
   - type: web
     name: research-strategy
@@ -93,6 +121,20 @@ services:
         value: 180
       - key: RESEARCH_BOOTSTRAP_FAST_MINUTES
         value: 5
+      - key: RESEARCH_FREE_PLAN_MODE
+        value: 1
+      - key: RESEARCH_MAX_SOURCE_ROWS
+        value: 1200
+      - key: RESEARCH_PAGE_SIZE
+        value: 200
+      - key: RESEARCH_OBSERVATIONAL_MIN_REFRESH_MINUTES
+        value: 60
+      - key: RESEARCH_OBSERVATIONAL_MAX_REFRESH_MINUTES
+        value: 240
+      - key: RESEARCH_EGRESS_DAILY_MB
+        value: 10
+      - key: DASHBOARD_CACHE_SECONDS
+        value: 900
       - key: RESEARCH_BOOT_DELAY_SECONDS
         value: 105
       - key: RESEARCH_MEMORY_HARD_MB
@@ -114,7 +156,7 @@ services:
       - key: RESEARCH_RUN_TOKEN
         sync: false
       - key: RESEARCH_DASHBOARD_MAX_ROWS
-        value: 180
+        value: 100
 
   - type: web
     name: research-traders
@@ -132,6 +174,20 @@ services:
         value: 180
       - key: RESEARCH_BOOTSTRAP_FAST_MINUTES
         value: 5
+      - key: RESEARCH_FREE_PLAN_MODE
+        value: 1
+      - key: RESEARCH_MAX_SOURCE_ROWS
+        value: 1200
+      - key: RESEARCH_PAGE_SIZE
+        value: 200
+      - key: RESEARCH_OBSERVATIONAL_MIN_REFRESH_MINUTES
+        value: 60
+      - key: RESEARCH_OBSERVATIONAL_MAX_REFRESH_MINUTES
+        value: 240
+      - key: RESEARCH_EGRESS_DAILY_MB
+        value: 10
+      - key: DASHBOARD_CACHE_SECONDS
+        value: 900
       - key: RESEARCH_BOOT_DELAY_SECONDS
         value: 135
       - key: RESEARCH_MEMORY_HARD_MB
@@ -153,7 +209,7 @@ services:
       - key: RESEARCH_RUN_TOKEN
         sync: false
       - key: RESEARCH_DASHBOARD_MAX_ROWS
-        value: 180
+        value: 100
 
   - type: web
     name: research-validation
@@ -171,6 +227,20 @@ services:
         value: 180
       - key: RESEARCH_BOOTSTRAP_FAST_MINUTES
         value: 5
+      - key: RESEARCH_FREE_PLAN_MODE
+        value: 1
+      - key: RESEARCH_MAX_SOURCE_ROWS
+        value: 1200
+      - key: RESEARCH_PAGE_SIZE
+        value: 200
+      - key: RESEARCH_OBSERVATIONAL_MIN_REFRESH_MINUTES
+        value: 60
+      - key: RESEARCH_OBSERVATIONAL_MAX_REFRESH_MINUTES
+        value: 240
+      - key: RESEARCH_EGRESS_DAILY_MB
+        value: 10
+      - key: DASHBOARD_CACHE_SECONDS
+        value: 900
       - key: RESEARCH_BOOT_DELAY_SECONDS
         value: 420
       - key: RESEARCH_MEMORY_HARD_MB
@@ -196,4 +266,4 @@ services:
       - key: RESEARCH_RUN_TOKEN
         sync: false
       - key: RESEARCH_DASHBOARD_MAX_ROWS
-        value: 240
+        value: 120
