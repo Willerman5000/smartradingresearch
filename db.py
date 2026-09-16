@@ -94,26 +94,54 @@ class RestDB:
         payload = list(rows)
         if not payload:
             return
+        if self._read_circuit_open():
+            raise RuntimeError("SUPABASE_CIRCUIT_OPEN")
         headers = {"Prefer": "resolution=merge-duplicates,return=minimal"}
         params = {"on_conflict": on_conflict} if on_conflict else {}
-        r = self.session.post(self._endpoint(table), params=params, headers=headers, json=payload, timeout=self.timeout)
-        r.raise_for_status()
+        try:
+            r = self.session.post(self._endpoint(table), params=params, headers=headers, json=payload, timeout=self.timeout)
+            if self._transient_status(r.status_code):
+                raise requests.HTTPError(f"Supabase transient HTTP {r.status_code}", response=r)
+            r.raise_for_status(); self._read_success()
+        except requests.RequestException:
+            self._read_failure(); raise
 
     def insert(self, table: str, rows: Iterable[Dict[str, Any]]) -> None:
         payload = list(rows)
         if not payload:
             return
+        if self._read_circuit_open():
+            raise RuntimeError("SUPABASE_CIRCUIT_OPEN")
         headers = {"Prefer": "return=minimal"}
-        r = self.session.post(self._endpoint(table), headers=headers, json=payload, timeout=self.timeout)
-        r.raise_for_status()
+        try:
+            r = self.session.post(self._endpoint(table), headers=headers, json=payload, timeout=self.timeout)
+            if self._transient_status(r.status_code):
+                raise requests.HTTPError(f"Supabase transient HTTP {r.status_code}", response=r)
+            r.raise_for_status(); self._read_success()
+        except requests.RequestException:
+            self._read_failure(); raise
 
     def patch(self, table: str, values: Dict[str, Any], *, filters: Dict[str, str]) -> None:
-        r = self.session.patch(self._endpoint(table), params=filters, headers={"Prefer":"return=minimal"}, json=values, timeout=self.timeout)
-        r.raise_for_status()
+        if self._read_circuit_open():
+            raise RuntimeError("SUPABASE_CIRCUIT_OPEN")
+        try:
+            r = self.session.patch(self._endpoint(table), params=filters, headers={"Prefer":"return=minimal"}, json=values, timeout=self.timeout)
+            if self._transient_status(r.status_code):
+                raise requests.HTTPError(f"Supabase transient HTTP {r.status_code}", response=r)
+            r.raise_for_status(); self._read_success()
+        except requests.RequestException:
+            self._read_failure(); raise
 
     def rpc(self, function: str, payload: Optional[Dict[str, Any]] = None) -> Any:
-        r = self.session.post(f"{self.url}/rest/v1/rpc/{function}", json=payload or {}, timeout=self.timeout)
-        r.raise_for_status()
+        if self._read_circuit_open():
+            raise RuntimeError("SUPABASE_CIRCUIT_OPEN")
+        try:
+            r = self.session.post(f"{self.url}/rest/v1/rpc/{function}", json=payload or {}, timeout=self.timeout)
+            if self._transient_status(r.status_code):
+                raise requests.HTTPError(f"Supabase transient HTTP {r.status_code}", response=r)
+            r.raise_for_status(); self._read_success()
+        except requests.RequestException:
+            self._read_failure(); raise
         try:
             return r.json()
         except Exception:

@@ -36,6 +36,7 @@ _state = {
     'bootstrap_pending': None, 'bootstrap_mode': 'UNKNOWN',
     'bootstrap_prev_pending': None, 'bootstrap_stall_cycles': 0,
     'next_auto_interval_minutes': None,
+    'infra_degraded': False, 'infra_last_error': None,
 }
 
 # RC8: browser dashboards are read-only and must never hammer Supabase. A
@@ -551,7 +552,12 @@ def _dashboard_refresh_async():
 
 
 def _dashboard_rows():
-    """Stale-while-revalidate: browser never causes a long Supabase wait."""
+    """Stale-while-revalidate without turning a Supabase outage into HTTP 503 spam.
+
+    On a cold start with the DB unavailable we return an empty *degraded* snapshot;
+    callers inspect _DASHBOARD_CACHE['error']. A DB outage is infrastructure state,
+    never evidence that Research has zero findings/champions.
+    """
     now=time.monotonic()
     with _DASHBOARD_CACHE['lock']:
         rows=list(_DASHBOARD_CACHE['rows'])
@@ -561,11 +567,24 @@ def _dashboard_rows():
     if rows:
         _dashboard_refresh_async()
         return rows
-    # Cold start: one bounded 6s attempt, then fail with JSON (never HTML/502 storm).
-    fresh=_load_dashboard_rows_uncached()
+    try:
+        fresh=_load_dashboard_rows_uncached()
+    except Exception as exc:
+        with _DASHBOARD_CACHE['lock']:
+            _DASHBOARD_CACHE['error']=f'{type(exc).__name__}: {str(exc)[:180]}'
+        return []
     with _DASHBOARD_CACHE['lock']:
         _DASHBOARD_CACHE.update(rows=list(fresh), ts=now, error=None)
     return fresh
+
+
+def _dashboard_cache_state():
+    with _DASHBOARD_CACHE['lock']:
+        return {
+            'error': _DASHBOARD_CACHE.get('error'),
+            'has_rows': bool(_DASHBOARD_CACHE.get('rows')),
+            'refreshing': bool(_DASHBOARD_CACHE.get('refreshing')),
+        }
 
 
 def _compact_metric(row):
@@ -643,8 +662,9 @@ def _current_causal_cell_ids():
             'experiment':'eq.CAUSAL_COVERAGE_STRATEGY',
             'order':'updated_at.desc',
         }, max_rows=1200, page_size=300)
-    except Exception:
-        return set()
+    except Exception as exc:
+        print(f'⚠️ causal coverage unavailable: {exc}', flush=True)
+        return None
     out=set()
     for row in rows or []:
         meta=row.get('meta') or {}
@@ -665,6 +685,10 @@ def _rescue_missing_causal_cells(run_id: str):
     if not bool(getattr(config,'CAUSAL_VALIDATION_RESCUE',True)):
         return 0
     present=_current_causal_cell_ids()
+    if present is None:
+        # Never interpret a database outage as 0/46 coverage.
+        print('⚠️ [I.2 VALIDATION] rescate omitido: cobertura actual no legible por infraestructura', flush=True)
+        return 0
     missing=[cell for cell in all_coverage_cells() if coverage_cell_id(cell) not in present]
     cap=int(getattr(config,'CAUSAL_VALIDATION_RESCUE_MAX_CELLS',12))
     missing=missing[:cap]
@@ -919,7 +943,7 @@ def _bootstrap_status(engine: str | None = None):
         },max_rows=2400,page_size=300)
     except Exception as exc:
         print(f'⚠️ bootstrap status: {exc}',flush=True)
-        return {"expected":len(expected_ids),"complete":0,"pending_ids":expected_ids,"read_error":True}
+        return {"expected":len(expected_ids),"complete":None,"pending_ids":set(),"read_error":True,"error":str(exc)[:180]}
     champions=_persistent_champions_by_cell(rows)
     complete={cid for cid in champions if cid in expected_ids}
     return {"expected":len(expected_ids),"complete":len(complete),"pending_ids":expected_ids-complete}
@@ -929,6 +953,16 @@ def _bootstrap_interval_minutes():
     if not bool(getattr(config, 'BOOTSTRAP_ACCELERATED', True)):
         return int(config.AUTO_INTERVAL_MINUTES), set(), 'NORMAL'
     status=_bootstrap_status(config.ENGINE)
+    if status.get('read_error'):
+        # Provider outage != 46 missing cells. Keep Fast-5 as the healthy cadence,
+        # but pause heavy jobs while the DB cannot even report current Champions.
+        _state['infra_degraded']=True
+        _state['infra_last_error']=status.get('error') or 'Supabase unavailable'
+        _state['bootstrap_mode']='INFRA_DEGRADED'
+        minutes=max(10, min(30, int(getattr(config, 'INFRA_BACKOFF_MINUTES', 15))))
+        return minutes, set(), 'INFRA_DEGRADED'
+    _state['infra_degraded']=False
+    _state['infra_last_error']=None
     pending=set(status.get('pending_ids') or set())
     count=len(pending)
     _state['bootstrap_pending']=count
@@ -1077,6 +1111,8 @@ def health():
         'ok': True, 'engine': config.ENGINE, 'version': config.VERSION,
         'authority': 'RESEARCH_ONLY', 'running': _state['running'],
         'rss_mb': round(rss_mb(),2), 'central_db': central.ready, 'private_db': private.ready,
+        'infra_degraded': bool(_state.get('infra_degraded')),
+        'infra_last_error': _state.get('infra_last_error'),
         'causal_cache': causal_cache_stats(),
     })
 
@@ -1103,35 +1139,45 @@ def dashboard_page():
 
 @app.get('/api/dashboard')
 def dashboard_api():
-    try:
-        rows = _dashboard_rows()
-        items = [_compact_metric(r) for r in rows]
-        stages = {}
-        for item in items:
-            stage = str(item.get('stage') or 'UNKNOWN')
-            stages[stage] = stages.get(stage, 0) + 1
-        return jsonify({
-            'ok': True, 'engine': config.ENGINE, 'version': config.VERSION,
-            'authority': 'RESEARCH_ONLY', 'rss_mb': round(rss_mb(),2),
-            'running': _state['running'], 'stages': stages, 'items': items,
-            'coverage': source_coverage(rows), 'causal_cache': causal_cache_stats(),
-            'last_run': {k:_state.get(k) for k in ('last_started_at','last_finished_at','last_error','last_source_rows','last_findings','last_source_coverage','last_ai_proposals','last_causal_cells','last_causal_profitable','bootstrap_pending','bootstrap_mode','next_auto_interval_minutes')},
-        })
-    except Exception as exc:
-        # Operational dashboard failure is not a Research-engine crash. 503 JSON
-        # lets the browser retry safely instead of parsing a Render/Cloudflare HTML page.
-        return jsonify({'ok':False,'engine':config.ENGINE,'deferred':True,
-                        'error':f'{type(exc).__name__}: {str(exc)[:200]}',
-                        'retry_after_seconds':15}), 503
+    # Dashboard is observability, not trading authority. During a provider outage
+    # it must remain HTTP-200 JSON and explicitly mark data as degraded/stale.
+    rows = _dashboard_rows()
+    cache_state = _dashboard_cache_state()
+    items = [_compact_metric(r) for r in rows]
+    stages = {}
+    for item in items:
+        stage = str(item.get('stage') or 'UNKNOWN')
+        stages[stage] = stages.get(stage, 0) + 1
+    degraded = bool(cache_state.get('error'))
+    return jsonify({
+        'ok': True, 'engine': config.ENGINE, 'version': config.VERSION,
+        'authority': 'RESEARCH_ONLY', 'rss_mb': round(rss_mb(),2),
+        'running': _state['running'], 'stages': stages, 'items': items,
+        'coverage': source_coverage(rows) if rows else {}, 'causal_cache': causal_cache_stats(),
+        'degraded': degraded, 'deferred': degraded, 'data_available': bool(rows),
+        'stale': degraded and bool(rows),
+        'error': cache_state.get('error'),
+        'retry_after_seconds': 60 if degraded else 0,
+        'last_run': {k:_state.get(k) for k in ('last_started_at','last_finished_at','last_error','last_source_rows','last_findings','last_source_coverage','last_ai_proposals','last_causal_cells','last_causal_profitable','bootstrap_pending','bootstrap_mode','next_auto_interval_minutes','infra_degraded','infra_last_error')},
+    })
 
 
 @app.get('/api/export/summary')
 def export_summary():
-    try:
-        items=[_compact_metric(r) for r in _dashboard_rows()]
-        return Response(_markdown_report(items), mimetype='text/markdown; charset=utf-8')
-    except Exception as exc:
-        return Response(f'# Error de exportación\n\n{type(exc).__name__}: {exc}', status=500, mimetype='text/plain; charset=utf-8')
+    rows=_dashboard_rows()
+    state=_dashboard_cache_state()
+    if not rows and state.get('error'):
+        text=(f'# Research Federation · {config.ENGINE.upper()}\n\n'
+              f'- Versión: {config.VERSION}\n- Autoridad: RESEARCH_ONLY\n'
+              '- Estado: DATOS TEMPORALMENTE NO DISPONIBLES\n'
+              '- Motivo: proveedor de base de datos temporalmente inaccesible.\n'
+              '- Política: no se interpreta esta indisponibilidad como pérdida de Champions ni como evidencia de trading.\n')
+        return Response(text, status=200, mimetype='text/markdown; charset=utf-8')
+    items=[_compact_metric(r) for r in rows]
+    text=_markdown_report(items)
+    if state.get('error'):
+        text += '\n\n> Datos cacheados: Supabase no respondió al último refresco.\n'
+    return Response(text, status=200, mimetype='text/markdown; charset=utf-8')
 
 
 def _auto_loop():
@@ -1147,7 +1193,12 @@ def _auto_loop():
             minutes, pending, mode = _bootstrap_interval_minutes()
             _state['next_auto_interval_minutes']=minutes
             print(f'⏱️ [{config.ENGINE}] cadence={mode} every={minutes}m pending={len(pending)}', flush=True)
-            if not _state['running']:
+            if mode == 'INFRA_DEGRADED':
+                # Healthy cadence remains Fast-5. During an actual provider outage
+                # there is no new DB evidence to process, so launching a run only
+                # amplifies 521/522/PGRST002 and can corrupt coverage semantics.
+                print(f'🛟 [{config.ENGINE}] Supabase degradado; ciclo pesado omitido sin alterar Champions', flush=True)
+            elif not _state['running']:
                 _start_job()
         except Exception as exc:
             print(f'⚠️ auto-loop {config.ENGINE}: {exc}', flush=True)
