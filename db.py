@@ -29,6 +29,10 @@ class RestDB:
         self._circuit_lock = threading.Lock()
         self._read_circuit_until = 0.0
         self._transient_failures = 0
+        # RC9.1: tiny critical reads (watermark/health) may probe recovery while
+        # the normal circuit is open, but at most once every 5s per process.
+        self._critical_probe_lock = threading.Lock()
+        self._last_critical_probe = 0.0
 
         # RC8 FREE-PLAN: presupuesto diario de egress por proceso Research.
         # El plan Free de Supabase comparte 5 GB/mes de egress no cacheado en
@@ -123,13 +127,24 @@ class RestDB:
                retries: int = 1, priority: str = "normal") -> List[Dict[str, Any]]:
         if not self.ready:
             raise RuntimeError("Supabase no configurado")
+        priority_name = str(priority or "normal").lower()
         if self._read_circuit_open():
-            raise RuntimeError("SUPABASE_READ_CIRCUIT_OPEN")
+            if priority_name != "critical":
+                raise RuntimeError("SUPABASE_READ_CIRCUIT_OPEN")
+            # A critical probe is a very small watermark/health read. It allows
+            # the service to recover before the 15s circuit expires without
+            # reopening the floodgates for normal historical queries.
+            with self._critical_probe_lock:
+                now_m = time.monotonic()
+                if now_m - self._last_critical_probe < 5.0:
+                    raise RuntimeError("SUPABASE_READ_CIRCUIT_OPEN")
+                self._last_critical_probe = now_m
+            retries = 0
         if self.egress_guard_open():
             stats = self.egress_stats()
             used = int(stats.get("bytes") or 0)
             hard = int(self._egress_daily_limit_bytes + self._egress_critical_reserve_bytes)
-            if str(priority or "normal").lower() != "critical" or used >= hard:
+            if priority_name != "critical" or used >= hard:
                 raise RuntimeError("SUPABASE_EGRESS_GUARD_OPEN")
         last = None
         for attempt in range(max(0, int(retries)) + 1):
