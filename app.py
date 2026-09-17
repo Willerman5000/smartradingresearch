@@ -148,7 +148,7 @@ def _latest_marker(table: str, select: str, *, extra: dict | None = None) -> str
     params = {'select': select, 'order': 'created_at.desc', 'limit': '1'}
     if extra:
         params.update(extra)
-    rows = central.select(table, params=params, timeout=4, retries=0)
+    rows = central.select(table, params=params, timeout=4, retries=0, priority='critical')
     if not rows:
         return '-'
     row = rows[0] or {}
@@ -186,8 +186,16 @@ def _source_rows(days: int, max_rows: int):
     # usable evidence instead of spending the remaining quota re-downloading it.
     try:
         stats = central.egress_stats()
-        if cached and float(stats.get('ratio') or 0.0) >= 0.80 and age is not None and age < max_age:
+        ratio = float(stats.get('ratio') or 0.0)
+        if cached and ratio >= 0.80:
+            # RC8.4: under Free-plan pressure, observational evidence may age,
+            # but causal market replay/search must keep running Fast-5.
             return cached
+        if not cached and ratio >= 1.0:
+            # A cold start with an exhausted observational budget must not stop
+            # the causal search. Engine observational output may be empty until
+            # the next UTC budget reset, while coverage search continues.
+            return []
     except Exception:
         pass
 
@@ -906,7 +914,7 @@ def _validation_input_watermark() -> str:
     ):
         params={'select':'updated_at','order':'updated_at.desc','limit':'1'}
         params.update(extra)
-        rows=central.select(table, params=params, timeout=4, retries=0)
+        rows=central.select(table, params=params, timeout=4, retries=0, priority='critical')
         parts.append(str((rows[0] or {}).get('updated_at') or '-') if rows else '-')
     return hashlib.sha256('::'.join(parts).encode('utf-8')).hexdigest()[:20]
 
@@ -1157,7 +1165,7 @@ def _canonical_champion_cells(engine: str | None = None):
     owner=str(engine or '').lower()
     if owner and owner!='validation':
         params['source_engine']=f'eq.{owner}'
-    rows=central.select('research_champions_v1', params=params, timeout=4, retries=0)
+    rows=central.select('research_champions_v1', params=params, timeout=4, retries=0, priority='critical')
     out=set()
     for row in rows or []:
         cid=_knowledge_cell_to_coverage_id(row)

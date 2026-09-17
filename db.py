@@ -50,6 +50,7 @@ class RestDB:
         self._egress_lock = threading.Lock()
         self._egress_day = datetime.now(timezone.utc).date().isoformat()
         self._egress_bytes_today = 0
+        self._egress_critical_reserve_bytes = 2 * 1024 * 1024
 
     @property
     def ready(self) -> bool:
@@ -85,6 +86,7 @@ class RestDB:
             if self._egress_day != today:
                 self._egress_day = today
                 self._egress_bytes_today = 0
+        self._egress_critical_reserve_bytes = 2 * 1024 * 1024
 
     def _record_egress(self, response) -> None:
         self._roll_egress_day()
@@ -118,13 +120,17 @@ class RestDB:
 
     def select(self, table: str, *, params: Optional[Dict[str, str]] = None,
                headers: Optional[Dict[str, str]] = None, timeout: Optional[float] = None,
-               retries: int = 1) -> List[Dict[str, Any]]:
+               retries: int = 1, priority: str = "normal") -> List[Dict[str, Any]]:
         if not self.ready:
             raise RuntimeError("Supabase no configurado")
         if self._read_circuit_open():
             raise RuntimeError("SUPABASE_READ_CIRCUIT_OPEN")
         if self.egress_guard_open():
-            raise RuntimeError("SUPABASE_EGRESS_GUARD_OPEN")
+            stats = self.egress_stats()
+            used = int(stats.get("bytes") or 0)
+            hard = int(self._egress_daily_limit_bytes + self._egress_critical_reserve_bytes)
+            if str(priority or "normal").lower() != "critical" or used >= hard:
+                raise RuntimeError("SUPABASE_EGRESS_GUARD_OPEN")
         last = None
         for attempt in range(max(0, int(retries)) + 1):
             try:
@@ -208,13 +214,13 @@ class RestDB:
         except Exception:
             return None
 
-    def paged_select(self, table: str, *, params: Dict[str, str], max_rows: int, page_size: int) -> List[Dict[str, Any]]:
+    def paged_select(self, table: str, *, params: Dict[str, str], max_rows: int, page_size: int, priority: str = "normal") -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
         start = 0
         while len(out) < max_rows:
             end = min(start + page_size - 1, max_rows - 1)
             headers = {"Range": f"{start}-{end}"}
-            rows = self.select(table, params=params, headers=headers)
+            rows = self.select(table, params=params, headers=headers, priority=priority)
             if not rows:
                 break
             out.extend(rows)
