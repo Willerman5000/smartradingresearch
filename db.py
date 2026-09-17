@@ -41,15 +41,17 @@ class RestDB:
         # a consumir la cuota completa.
         try:
             _os = __import__('os')
-            daily_mb = float(_os.getenv('RESEARCH_EGRESS_DAILY_MB', '10') or 10)
+            daily_mb = float(_os.getenv('RESEARCH_EGRESS_DAILY_MB', '6') or 6)
             free_plan_mode = str(_os.getenv('RESEARCH_FREE_PLAN_MODE', '1') or '1').strip().lower() not in {'0','false','no','off'}
         except Exception:
-            daily_mb = 10.0
+            daily_mb = 6.0
             free_plan_mode = True
         # Incluso si Render conserva una variable antigua (p.ej. 18 MB/día),
-        # FREE_PLAN_MODE impone el techo conservador de 10 MB/día/servicio.
+        # FREE_PLAN_MODE impone el techo conservador de 6 MB/día/servicio.
+        # Cinco motores Research a este techo + Main a 30 MB/día dejan un
+        # margen amplio frente al plan Free incluso antes de considerar caché.
         if free_plan_mode:
-            daily_mb = min(daily_mb, 10.0)
+            daily_mb = min(daily_mb, 6.0)
         self._egress_daily_limit_bytes = max(4.0, min(64.0, daily_mb)) * 1024 * 1024
         self._egress_lock = threading.Lock()
         self._egress_day = datetime.now(timezone.utc).date().isoformat()

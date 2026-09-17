@@ -63,24 +63,24 @@ def _auth_ok() -> bool:
 
 
 def _source_row_in_active_contract(row) -> bool:
-    """Final V1 learning contract for observational evidence.
-
-    Historical 5m/15m and retired Spot timeframes remain stored in Supabase but
-    do not create new Strategy Factory / trader / execution evidence.
-    """
-    system_type = str((row or {}).get("system_type") or "").lower()
-    symbol = str((row or {}).get("symbol") or "").upper().replace("/", "-")
-    tf = str((row or {}).get("timeframe") or "").upper()
-    if system_type == "futures":
-        core = {"BTC-USDT","ETH-USDT","SOL-USDT","XRP-USDT","ADA-USDT","LINK-USDT","BNB-USDT"}
-        if tf in {"30M","1H","2H","4H"}:
-            return symbol in core
-        if tf in {"12H","1D"}:
-            return symbol in {"BTC-USDT","ETH-USDT","SOL-USDT"}
+    """RC9.2: one governed 92-cell contract for Main and Research."""
+    try:
+        from operational_contract import source_row_in_active_contract
+        return bool(source_row_in_active_contract(row))
+    except Exception:
+        # Safe fallback: preserve the same exact contract if the helper could not
+        # be imported during a partial deploy.
+        system_type = str((row or {}).get("system_type") or "").lower()
+        symbol = str((row or {}).get("symbol") or "").upper().replace("/", "-")
+        tf = str((row or {}).get("timeframe") or "").upper()
+        if system_type == "futures":
+            core = {"BTC-USDT","ETH-USDT","SOL-USDT","XRP-USDT","ADA-USDT","LINK-USDT","BNB-USDT"}
+            if tf in {"30M","1H","2H","4H"}:
+                return symbol in core
+            return tf in {"12H","1D"} and symbol in {"BTC-USDT","ETH-USDT","SOL-USDT"}
+        if system_type == "spot":
+            return symbol in {"BTC-USDT","PAXG-USDT","PAXG-BTC"} and tf in {"4H","12H","1D","1W"}
         return False
-    if system_type == "spot":
-        return symbol in {"BTC-USDT","PAXG-USDT","PAXG-BTC"} and tf in {"4H","12H","1D","1W"}
-    return False
 
 
 def _source_rows_full(days: int, max_rows: int):
