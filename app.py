@@ -14,10 +14,41 @@ import config
 from db import RestDB, since_iso, utc_now
 from engines import ENGINES
 from engines.base import rss_mb, balanced_current_rows, source_coverage
+import coverage_optimizer as _coverage_optimizer
 from coverage_optimizer import (
     analyze_coverage_for_engine, all_coverage_cells, owner_for_cell, coverage_cell_id,
     optimize_cell, optimize_cell_candidates, retest_registry_promotions
 )
+from operational_contract import optimizer_lanes, research_hold_bars, research_wait_bars
+
+# Commit 9.6: patch the existing optimizer's lane registry instead of forking its
+# 600-line causal engine. All optimizer functions resolve LANES dynamically, so
+# discovery, owner routing and registry retests share the same 60-cell contract.
+_coverage_optimizer.LANES = optimizer_lanes()
+
+# Medium/High representatives must investigate faster opportunity decay. The
+# causal optimizer is sequential per worker; this bounded wrapper temporarily
+# supplies group-specific max-wait/max-hold geometry without changing OOS gates.
+_ORIGINAL_OPTIMIZE_CELL_CANDIDATES = _coverage_optimizer.optimize_cell_candidates
+_GEOMETRY_PATCH_LOCK = threading.Lock()
+
+def _risk_aware_optimize_cell_candidates(cell, owner_engine=None, blocked_strategy_ids=None):
+    symbol = str((cell or ('','','','',''))[2] or '').upper()
+    original_hold = _coverage_optimizer._hold_bars
+    original_wait = _coverage_optimizer._wait_bars
+    with _GEOMETRY_PATCH_LOCK:
+        try:
+            _coverage_optimizer._hold_bars = lambda tf: research_hold_bars(symbol, tf)
+            _coverage_optimizer._wait_bars = lambda tf: research_wait_bars(symbol, tf)
+            return _ORIGINAL_OPTIMIZE_CELL_CANDIDATES(
+                cell, owner_engine=owner_engine, blocked_strategy_ids=blocked_strategy_ids
+            )
+        finally:
+            _coverage_optimizer._hold_bars = original_hold
+            _coverage_optimizer._wait_bars = original_wait
+
+_coverage_optimizer.optimize_cell_candidates = _risk_aware_optimize_cell_candidates
+optimize_cell_candidates = _risk_aware_optimize_cell_candidates
 from exchange_flow import current_exchange_flow_finding
 from historical_market import cache_stats as causal_cache_stats
 from alpha_decay import classify_alpha_decay
@@ -45,7 +76,7 @@ _state = {
 _DASHBOARD_CACHE = {'lock': threading.Lock(), 'rows': [], 'ts': 0.0, 'refreshing': False, 'error': None}
 _DASHBOARD_CACHE_TTL = max(300, int(os.getenv('DASHBOARD_CACHE_SECONDS', '900') or 900))
 
-# RC8 FREE-PLAN: el replay causal Fast-5 NO se ralentiza. Lo que se desacopla
+# Commit 9.6 FREE-PLAN: el replay causal Fast-20 evita saturar Render/Supabase. Lo que se desacopla
 # es la descarga repetida del dataset observacional desde Supabase. Cada motor
 # conserva su última ventana en RAM y usa dos watermarks diminutos para saber
 # si realmente apareció una señal/resultado nuevo.
@@ -63,7 +94,7 @@ def _auth_ok() -> bool:
 
 
 def _source_row_in_active_contract(row) -> bool:
-    """RC9.2: one governed 92-cell contract for Main and Research."""
+    """Commit 9.6: bounded representative Research contract; production stays broader."""
     try:
         from operational_contract import source_row_in_active_contract
         return bool(source_row_in_active_contract(row))
@@ -74,13 +105,34 @@ def _source_row_in_active_contract(row) -> bool:
         symbol = str((row or {}).get("symbol") or "").upper().replace("/", "-")
         tf = str((row or {}).get("timeframe") or "").upper()
         if system_type == "futures":
-            core = {"BTC-USDT","ETH-USDT","SOL-USDT","XRP-USDT","ADA-USDT","LINK-USDT","BNB-USDT"}
-            if tf in {"30M","1H","2H","4H"}:
-                return symbol in core
-            return tf in {"12H","1D"} and symbol in {"BTC-USDT","ETH-USDT","SOL-USDT"}
+            allowed = {
+                "BTC-USDT": {"30M","1H","2H","4H","12H","1D"},
+                "XRP-USDT": {"30M","1H","2H","4H","12H"},
+                "LINK-USDT": {"30M","1H","2H","4H"},
+                "SUI-USDT": {"30M","1H","2H"},
+            }
+            return tf in allowed.get(symbol, set())
         if system_type == "spot":
             return symbol in {"BTC-USDT","PAXG-USDT","PAXG-BTC"} and tf in {"4H","12H","1D","1W"}
         return False
+
+
+def _active_coverage_cells():
+    """Commit 9.6 heavy Research cells after the optimizer lane patch."""
+    try:
+        from operational_contract import coverage_cell_id_in_active_contract
+        cells = list(all_coverage_cells())
+        filtered = [cell for cell in cells if coverage_cell_id_in_active_contract(coverage_cell_id(cell))]
+        if len(filtered) != 60:
+            raise RuntimeError(f"expected 60 representative cells, got {len(filtered)}")
+        return filtered
+    except Exception as exc:
+        print(f"⚠️ active Research contract: {exc}", flush=True)
+        return []
+
+def _required_research_cells() -> int:
+    cells = _active_coverage_cells()
+    return len(cells) if cells else 60
 
 
 def _source_rows_full(days: int, max_rows: int):
@@ -165,7 +217,7 @@ def _source_watermark() -> str:
 def _source_rows(days: int, max_rows: int):
     """Free-plan source cache.
 
-    Fast-5 still executes causal market replay/search. The large Supabase
+    Fast-20 still executes causal market replay/search. The large Supabase
     observational dataset is refreshed only when evidence changed and at most
     after the configured minimum cadence. This avoids downloading the same JSON
     window dozens of times per hour across five Research services.
@@ -189,7 +241,7 @@ def _source_rows(days: int, max_rows: int):
         ratio = float(stats.get('ratio') or 0.0)
         if cached and ratio >= 0.80:
             # RC8.4: under Free-plan pressure, observational evidence may age,
-            # but causal market replay/search must keep running Fast-5.
+            # but causal market replay/search must keep running Fast-20.
             return cached
         if not cached and ratio >= 1.0:
             # A cold start with an exhausted observational budget must not stop
@@ -656,7 +708,7 @@ def _best_causal_per_cell(rows):
 def _load_dashboard_rows_uncached():
     """Compact observability read designed for Supabase Free egress.
 
-    Validation needs the 92 action-specific causal cells plus a small diagnostic tail, not
+    Validation needs the 60 representative action-specific causal cells plus a small diagnostic tail, not
     hundreds of historical challenger JSON payloads. Evidence engines need only
     their newest current rows. This endpoint never grants authority.
     """
@@ -811,7 +863,7 @@ def _markdown_report(items):
     causal_all=[x for x in items if str(x.get('experiment') or '') in {'CAUSAL_COVERAGE_STRATEGY','CAUSAL_REGISTRY_RETEST','CAUSAL_SHADOW_RECYCLE'}]
     causal=_best_causal_per_cell(causal_all)
     if causal:
-        required=int(getattr(config,'CAUSAL_REQUIRED_CELLS',92))
+        required=_required_research_cells()
         selection_positive=sum(1 for x in causal if str((x.get('meta') or {}).get('coverage_status') or '')=='SELECTION_PROFITABLE')
         oos_positive=sum(1 for x in causal if x.get('validation_expectancy_r') is not None and float(x.get('validation_expectancy_r') or 0)>0 and (x.get('validation_profit_factor') is None or float(x.get('validation_profit_factor') or 0)>1.0))
         shadow_ready=sum(1 for x in causal if str(x.get('stage') or '') in {'SHADOW_READY','SHADOW_READY_FAST'})
@@ -875,7 +927,7 @@ def _current_causal_cell_ids():
 
 
 def _rescue_missing_causal_cells(run_id: str):
-    """Validation is the fifth research instance: fill missing 92 action-specific specialists.
+    """Validation is the fifth research instance: fill missing 60 representative action-specific specialists.
 
     Owners remain execution/risk/strategy/traders. Rescue computes only missing
     market×symbol×TF×action cells and persists all pre-declared finalists.
@@ -884,15 +936,15 @@ def _rescue_missing_causal_cells(run_id: str):
         return 0
     present=_current_causal_cell_ids()
     if present is None:
-        # Never interpret a database outage as 0/92 action-cell coverage.
+        # Never interpret a database outage as 0/60 representative action-cell coverage.
         print('⚠️ [I.2 VALIDATION] rescate omitido: cobertura actual no legible por infraestructura', flush=True)
         return 0
-    missing=[cell for cell in all_coverage_cells() if coverage_cell_id(cell) not in present]
+    missing=[cell for cell in _active_coverage_cells() if coverage_cell_id(cell) not in present]
     cap=int(getattr(config,'CAUSAL_VALIDATION_RESCUE_MAX_CELLS',12))
     missing=missing[:cap]
     if not missing:
         return 0
-    print(f'🧯 [I.2 VALIDATION] rescate causal faltantes={len(missing)} presentes={len(present)}/{getattr(config, "CAUSAL_REQUIRED_CELLS", 92)}', flush=True)
+    print(f'🧯 [I.2 VALIDATION] rescate causal faltantes={len(missing)} presentes={len(present)}/{_required_research_cells()}', flush=True)
     done=0
     blocked_map=_blocked_candidate_strategy_ids()
     for cell in missing:
@@ -950,7 +1002,7 @@ def _run_validation(run_id: str):
     rows=[r for r in raw if (r.get('meta') or {}).get('is_current') is True]
 
     # Snapshot incumbents/current challengers BEFORE analyzing the new batch.
-    # 800 bounded rows are enough for the 92 active action cells and avoid the former
+    # 800 bounded rows are enough for the 60 active heavy-Research action cells and avoid the former
     # 5,000-row JSON transfer on every Validation cycle.
     try:
         old = central.paged_select('research_promotions_v1', params={
@@ -1222,13 +1274,13 @@ def _blocked_candidate_strategy_ids():
 
 
 def _priority_cells_for_engine(engine: str):
-    """Prioritize genuinely empty/degraded cells from the canonical 92-row action core."""
+    """Prioritize genuinely empty/degraded cells from the Commit 9.6 representative action core."""
     try:
         filled=_canonical_champion_cells(engine)
     except Exception:
         return set()
     priority=set()
-    for cell in all_coverage_cells():
+    for cell in _active_coverage_cells():
         if owner_for_cell(cell)!=str(engine).lower():
             continue
         cid=coverage_cell_id(cell)
@@ -1238,9 +1290,9 @@ def _priority_cells_for_engine(engine: str):
 
 
 def _bootstrap_status(engine: str | None = None):
-    """Fast-5 reads only the canonical Champion core (max 92 rows)."""
+    """Fast-20 reads only the representative Champion core (max 60 rows)."""
     owner=str(engine or config.ENGINE).lower()
-    expected=[c for c in all_coverage_cells() if owner=='validation' or owner_for_cell(c)==owner]
+    expected=[c for c in _active_coverage_cells() if owner=='validation' or owner_for_cell(c)==owner]
     expected_ids={coverage_cell_id(c) for c in expected}
     if not expected_ids:
         return {'expected':0,'complete':0,'pending_ids':set()}
@@ -1263,19 +1315,19 @@ def _bootstrap_interval_minutes():
         return int(config.AUTO_INTERVAL_MINUTES), set(), 'NORMAL'
     status=_bootstrap_status(config.ENGINE)
     if status.get('read_error'):
-        # Provider outage != 92 missing action cells. Keep Fast-5 as the healthy cadence,
+        # Provider outage != missing action cells. Keep Fast-20 as the healthy cadence,
         # but pause heavy jobs while the DB cannot even report current Champions.
         _state['infra_degraded']=True
         _state['infra_last_error']=status.get('error') or 'Supabase unavailable'
         _state['bootstrap_mode']='INFRA_DEGRADED'
-        minutes=max(10, min(30, int(getattr(config, 'INFRA_BACKOFF_MINUTES', 15))))
+        minutes=max(20, min(60, int(getattr(config, 'INFRA_BACKOFF_MINUTES', 20))))
         return minutes, set(), 'INFRA_DEGRADED'
     _state['infra_degraded']=False
     _state['infra_last_error']=None
     pending=set(status.get('pending_ids') or set())
     if status.get('egress_guard'):
         _state['infra_degraded']=False
-        _state['bootstrap_mode']='BOOTSTRAP_FAST_EGRESS_GUARD'
+        _state['bootstrap_mode']='BOOTSTRAP_FAST20_EGRESS_GUARD'
     count=len(pending)
     _state['bootstrap_pending']=count
     if count <= 0:
@@ -1300,11 +1352,11 @@ def _bootstrap_interval_minutes():
         mode='BOOTSTRAP_BACKOFF'
         minutes=int(getattr(config, 'BOOTSTRAP_BACKOFF_MINUTES', 60))
     elif status.get('egress_guard'):
-        mode='BOOTSTRAP_FAST_EGRESS_GUARD'
-        minutes=int(getattr(config, 'BOOTSTRAP_FAST_MINUTES', 5))
+        mode='BOOTSTRAP_FAST20_EGRESS_GUARD'
+        minutes=max(20, int(getattr(config, 'BOOTSTRAP_FAST_MINUTES', 20)))
     else:
-        mode='BOOTSTRAP_FAST'
-        minutes=int(getattr(config, 'BOOTSTRAP_FAST_MINUTES', 5))
+        mode='BOOTSTRAP_FAST20'
+        minutes=max(20, int(getattr(config, 'BOOTSTRAP_FAST_MINUTES', 20)))
     _state['bootstrap_mode']=mode
     return minutes, pending, mode
 
@@ -1470,6 +1522,13 @@ def dashboard_api():
     return jsonify({
         'ok': True, 'engine': config.ENGINE, 'version': config.VERSION,
         'authority': 'RESEARCH_ONLY', 'rss_mb': round(rss_mb(),2),
+        'learning_policy': {
+            'mode': getattr(config, 'LEARNING_MODE', 'BACKTEST_OOS_PRIMARY_LIVE_ALPHA_DECAY'),
+            'primary_source': getattr(config, 'REVIEWTRADER_PRIMARY_SOURCE', 'RESEARCH_BACKTEST_OOS'),
+            'live_role': getattr(config, 'LIVE_ROLE', 'ALPHA_DECAY_AND_EXECUTION_VALIDATION'),
+            'heavy_cells': _required_research_cells(),
+            'fast_minutes_min': max(20, int(getattr(config, 'BOOTSTRAP_FAST_MINUTES', 20))),
+        },
         'running': _state['running'], 'stages': stages, 'items': items,
         'coverage': source_coverage(rows) if rows else {}, 'causal_cache': causal_cache_stats(),
         'degraded': degraded, 'deferred': degraded, 'data_available': bool(rows),
@@ -1512,7 +1571,7 @@ def _auto_loop():
             _state['next_auto_interval_minutes']=minutes
             print(f'⏱️ [{config.ENGINE}] cadence={mode} every={minutes}m pending={len(pending)}', flush=True)
             if mode == 'INFRA_DEGRADED':
-                # Healthy cadence remains Fast-5. During an actual provider outage
+                # Healthy cadence remains Fast-20. During an actual provider outage
                 # there is no new DB evidence to process, so launching a run only
                 # amplifies 521/522/PGRST002 and can corrupt coverage semantics.
                 print(f'🛟 [{config.ENGINE}] Supabase degradado; ciclo pesado omitido sin alterar Champions', flush=True)
@@ -1521,7 +1580,7 @@ def _auto_loop():
         except Exception as exc:
             print(f'⚠️ auto-loop {config.ENGINE}: {exc}', flush=True)
             minutes = int(getattr(config, 'BOOTSTRAP_BACKOFF_MINUTES', 60))
-        time.sleep(max(5, int(minutes)) * 60)
+        time.sleep(max(20, int(minutes)) * 60)
 
 
 if config.ENGINE not in config.VALID_ENGINES:
