@@ -8,6 +8,7 @@ import time
 import traceback
 import uuid
 from datetime import datetime, timezone
+from typing import Any, Dict, List
 from flask import Flask, jsonify, request, render_template, Response
 
 import config
@@ -1020,6 +1021,76 @@ def _validation_input_watermark() -> str:
     return hashlib.sha256('::'.join(parts).encode('utf-8')).hexdigest()[:20]
 
 
+_VALIDATION_PRIMARY_EXPERIMENTS = (
+    'CAUSAL_COVERAGE_STRATEGY',
+    'CAUSAL_REGISTRY_RETEST',
+    'CAUSAL_SHADOW_RECYCLE',
+    'AI_STRATEGY_PROPOSAL',
+    'FACTORY_STRATEGY',
+    'EXCHANGE_FLOW_CONTEXT',
+)
+
+
+def _load_validation_findings_compact() -> List[Dict[str, Any]]:
+    """Load only current evidence that Validation can actually classify.
+
+    RC9.7.4 final audit found that Validation downloaded up to 2,400 full
+    findings in one paged request while the Free-plan egress guard was only
+    2 MB/day. If a later page hit the guard, ``paged_select`` raised and the
+    already downloaded rows were discarded, so the dashboard could remain at
+    0 even while EXECUTION/RISK/STRATEGY/TRADERS were producing evidence.
+
+    The active 60-cell contract is owned by four evidence engines. Read their
+    current causal/generated rows in bounded independent requests and keep any
+    successfully loaded engine even if another request is temporarily deferred.
+    No evidence threshold is relaxed and no production authority is granted.
+    """
+    limits = {
+        'execution': 80,
+        'risk': 120,
+        'strategy': 120,
+        'traders': 180,
+    }
+    experiment_filter = 'in.(' + ','.join(_VALIDATION_PRIMARY_EXPERIMENTS) + ')'
+    fields = 'engine,experiment,feature_key,scope,stage,metrics,meta,research_version,updated_at'
+    out: List[Dict[str, Any]] = []
+    seen = set()
+    errors = []
+
+    for engine, limit in limits.items():
+        try:
+            batch = central.select('research_findings_v1', params={
+                'select': fields,
+                'engine': f'eq.{engine}',
+                'research_version': f'eq.{config.VERSION}',
+                'experiment': experiment_filter,
+                'stage': 'neq.STALE',
+                'order': 'updated_at.desc',
+                'limit': str(limit),
+            }, timeout=8, retries=0)
+        except Exception as exc:
+            errors.append(f'{engine}:{type(exc).__name__}:{str(exc)[:100]}')
+            print(f'⚠️ [validation] lectura compacta {engine}: {str(exc)[:160]}', flush=True)
+            continue
+
+        for row in batch or []:
+            meta = row.get('meta') or {}
+            if meta.get('is_current') is False:
+                continue
+            key = str(row.get('feature_key') or '')
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out.append(row)
+
+    # Keep diagnostics observable in run metadata without converting a partial
+    # provider read into "0 evidence". A successful partial batch is still
+    # validated; the next Fast-20 cycle will pick up the remainder.
+    _state['validation_input_rows'] = len(out)
+    _state['validation_input_errors'] = errors[:4]
+    return out
+
+
 def _run_validation(run_id: str):
     """Validate challengers without erasing an already proven cell Champion.
 
@@ -1042,13 +1113,16 @@ def _run_validation(run_id: str):
     except Exception:
         input_wm = None
 
-    raw = central.paged_select('research_findings_v1', params={
-        'select':'engine,experiment,feature_key,scope,stage,metrics,meta,research_version,updated_at',
-        'research_version':f'eq.{config.VERSION}',
-        'stage':'neq.STALE',
-        'order':'updated_at.desc',
-    }, max_rows=2400, page_size=240)
-    rows=[r for r in raw if (r.get('meta') or {}).get('is_current') is True]
+    rows = _load_validation_findings_compact()
+    if not rows:
+        # Empty evidence is a valid cold-start state, but do not perform the
+        # expensive promotions snapshot when there is nothing to classify.
+        # The watermark is deliberately NOT advanced after a partial read error
+        # so the next cycle retries instead of caching a false empty state.
+        if input_wm and not _state.get('validation_input_errors'):
+            with _VALIDATION_WATERMARK['lock']:
+                _VALIDATION_WATERMARK['value'] = input_wm
+        return 0, 0
 
     # Snapshot incumbents/current challengers BEFORE analyzing the new batch.
     # 800 bounded rows are enough for the 60 active heavy-Research action cells and avoid the former
@@ -1164,9 +1238,15 @@ def _run_validation(run_id: str):
             central.patch('research_promotions_v1', {'stage':'STALE','meta':meta,'updated_at':utc_now()}, filters={'candidate_key':f'eq.{key}'})
     except Exception as exc:
         print(f'⚠️ stale promotions: {exc}', flush=True)
-    if input_wm:
+    if input_wm and not _state.get('validation_input_errors'):
         with _VALIDATION_WATERMARK['lock']:
             _VALIDATION_WATERMARK['value'] = input_wm
+    # Do not leave the Validation dashboard showing the previous empty cache
+    # for up to 15 minutes after a successful classification cycle.
+    with _DASHBOARD_CACHE['lock']:
+        _DASHBOARD_CACHE['rows'] = []
+        _DASHBOARD_CACHE['ts'] = 0.0
+        _DASHBOARD_CACHE['error'] = None
     return len(rows), len(promotions)
 
 

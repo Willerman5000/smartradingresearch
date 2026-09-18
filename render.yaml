@@ -238,7 +238,7 @@ services:
       - key: RESEARCH_OBSERVATIONAL_MAX_REFRESH_MINUTES
         value: 240
       - key: RESEARCH_EGRESS_DAILY_MB
-        value: 2
+        value: 4
       - key: DASHBOARD_CACHE_SECONDS
         value: 900
       - key: RESEARCH_BOOT_DELAY_SECONDS
@@ -256,9 +256,9 @@ services:
       - key: RESEARCH_CAUSAL_REGISTRY_RETEST_LIMIT
         value: 16
       - key: RESEARCH_CAUSAL_VALIDATION_RESCUE
-        value: 1
+        value: 0
       - key: RESEARCH_CAUSAL_VALIDATION_RESCUE_MAX_CELLS
-        value: 12
+        value: 0
       - key: CENTRAL_SUPABASE_URL
         sync: false
       - key: CENTRAL_SUPABASE_SERVICE_KEY

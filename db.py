@@ -53,12 +53,15 @@ class RestDB:
         except Exception:
             daily_mb = 2.0
             free_plan_mode = True
-        # Incluso si Render conserva una variable antigua (p.ej. 18 MB/día),
-        # FREE_PLAN_MODE impone el techo RC9.7 de 2 MB/día/servicio.
-        # Cinco motores Research a este techo + Main a 30 MB/día dejan un
-        # margen amplio frente al plan Free incluso antes de considerar caché.
+        # RC9.7.4: evidence engines stay at 2 MB/day. Validation receives a
+        # still-conservative 4 MB/day because it must read the compact outputs
+        # of the other four services before classifying them. This remains far
+        # below the 5 GB/month Free allowance and prevents an egress guard from
+        # making Validation look permanently empty.
         if free_plan_mode:
-            daily_mb = min(daily_mb, 2.0)
+            engine_name = str(_os.getenv('RESEARCH_ENGINE', '') or '').strip().lower()
+            free_cap_mb = 4.0 if engine_name == 'validation' else 2.0
+            daily_mb = min(daily_mb, free_cap_mb)
         self._egress_daily_limit_bytes = max(1.0, min(64.0, daily_mb)) * 1024 * 1024
         self._egress_lock = threading.Lock()
         self._egress_day = datetime.now(timezone.utc).date().isoformat()

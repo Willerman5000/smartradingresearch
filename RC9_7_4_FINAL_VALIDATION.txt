@@ -1,0 +1,24 @@
+RC9.7.4 FINAL FREEZE - VALIDATION
+=================================
+
+Main
+- Python compile: OK (app.py, pdf_learning_report.py)
+- JavaScript syntax: OK (static/futures.js, static/analytics.js)
+- Jinja parse: OK (templates/index.html, templates/analytics.html)
+- Contingency bank: 643 strategies, 150/150 operational cells, min 4/cell
+- Functional indicator coverage: 39/39, every component used functionally >= 2 times
+- saved_signals schema contract: 12/12 final persistence fields present
+- Futures lifecycle: fresh confirmations excluded from active/vigency list; entry-touched countdown removed
+- Analytics simple view: internal terms ReviewTrader/Champion/Shadow/OOS/Research Federation/alpha decay absent from normal visible summary copy
+
+Research
+- Python compile: OK (app.py, config.py, db.py)
+- 60-cell contract: execution 8 + risk 16 + strategy 12 + traders 24
+- SUI HIGH representative coverage: 6 cells (30M/1H/2H LONG+SHORT)
+- Validation reads bounded compact current evidence instead of a 2,400-row full join
+- Validation dashboard cache invalidates after classification
+- Free-plan egress cap: evidence engines 2 MB/day; validation max 4 MB/day
+- Validation heavy causal rescue disabled on Free-plan, including protection against stale old env values
+- Research VERSION intentionally unchanged to preserve current cold-start evidence
+
+No Safety / Entry / SL / TP / leverage / OOS threshold was relaxed.
