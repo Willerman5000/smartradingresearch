@@ -9,7 +9,7 @@ exists only to confirm execution persistence and detect alpha decay.
 from __future__ import annotations
 from typing import Any, Dict, List, Tuple
 
-VERSION = "RC9_6_2_FAST_EDGE_PRIORITY_BACKTEST_PRIMARY"
+VERSION = "RC9_7_CONTINGENCY_COLDSTART_BACKTEST_PRIMARY"
 SPOT_SYMBOLS = ("BTC-USDT", "PAXG-USDT", "PAXG-BTC")
 SPOT_TIMEFRAMES = ("4H", "12H", "1D", "1W")
 
@@ -159,7 +159,7 @@ def optimizer_lanes() -> Dict[str, List[Tuple[str, str, str, str, str]]]:
     lanes = {"execution": execution, "risk": risk, "strategy": strategy, "traders": traders}
     flat = [c for name in ("execution", "risk", "strategy", "traders") for c in lanes[name]]
     if len(flat) != 60 or len(set(flat)) != 60:
-        raise RuntimeError(f"RC9.6.2 optimizer lane mismatch: total={len(flat)} unique={len(set(flat))}")
+        raise RuntimeError(f"RC9.7 optimizer lane mismatch: total={len(flat)} unique={len(set(flat))}")
     return lanes
 
 

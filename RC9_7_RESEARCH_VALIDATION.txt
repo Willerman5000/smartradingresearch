@@ -1,0 +1,12 @@
+RC9.7 RESEARCH VALIDATION · 2026-09-18
+
+PASS · Python syntax: config.py, coverage_optimizer.py, db.py, operational_contract.py compile.
+PASS · Active contract: exactly 60 Heavy Research cells.
+PASS · Split: Spot 24 + Futures representative Research 36.
+PASS · Representatives: CORE1 BTC, CORE2 XRP, MEDIUM LINK, HIGH SUI.
+PASS · Fast Research minimum: 20 minutes.
+PASS · Research free-plan egress: hard cap 2 MB/day/service/process.
+PASS · Governance schema defaults/functions updated to 60 cells (not 46/92).
+PASS · Contingency causal baselines added as Research hypotheses; they do not bypass Holdout/OOS/costs/Shadow.
+PASS · 5m/15m remain outside the active production/Research contract.
+PASS · New Research version: RFV1_15_RC9_7_CONTINGENCY_COLDSTART_60CELL_20260918.

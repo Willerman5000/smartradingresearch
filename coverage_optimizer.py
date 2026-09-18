@@ -1,26 +1,15 @@
 from __future__ import annotations
 
-"""FINAL V1 RC4 — Active Symbol×Timeframe Profitability Coverage.
+"""RC9.7 — causal coverage + contingency-bank audit.
 
-Research target:
-- Futures core: 7 symbols × (30M,1H,2H,4H) × (LONG,SHORT) = 56 action cells.
-- Futures swing context: BTC/ETH/SOL × (12H,1D) × (LONG,SHORT) = 12 action cells.
-- Spot: BTC-USDT, PAXG-USDT, PAXG-BTC × 4 TF × (COMPRA_SPOT,VENTA_SPOT) = 24 action cells.
-- Total contract = 92 cells.
+The heavy Research contract remains exactly 60 representative cells.  In each
+cell the optimizer evaluates both rotating discovery candidates and a fixed,
+result-independent contingency baseline (trend pullback, sweep reversal,
+breakout/retest, mean reversion and, where applicable, higher-TF whale-flow
+proxy).  These baselines are never promoted merely because they are defaults:
+Holdout/OOS, costs and runtime parity remain mandatory for statistical authority.
 
-RC8.1: profitability authority is action-specific. A LONG edge never fills SHORT;
-a COMPRA_SPOT edge never fills VENTA_SPOT. Regime remains a StrategySpec/filter,
-not a mandatory extra governance dimension.
-
-5m/15m were retired from V1 after the final audit: they were not part of the
-operator's intended workflow and consumed disproportionate refresh/backtest
-capacity. Historical rows remain preserved but are not part of the active V1
-contract.
-
-The engine does NOT force a profitable result. It keeps each cell in the
-iterative research loop until a pre-declared finalist survives untouched Final
-OOS + walk-forward + costs + runtime parity, then Validation can move it to
-SHADOW_READY. Final OOS never ranks candidates.
+5m/15m remain retired.  Final OOS never ranks candidates.
 """
 
 import hashlib
@@ -36,6 +25,7 @@ from full_stack_certification import build_full_stack_certification
 from db import utc_now
 from engines.base import runtime_contract, rss_mb
 from historical_market import fetch_market, cache_stats
+from operational_contract import group_for_symbol, research_hold_bars, research_wait_bars
 
 EXPERIMENT = "CAUSAL_COVERAGE_STRATEGY"
 FUTURES_SYMBOLS = ("BTC-USDT", "ETH-USDT", "SOL-USDT", "XRP-USDT", "ADA-USDT", "LINK-USDT", "BNB-USDT")
@@ -126,6 +116,68 @@ def _search_wave(cell: Tuple[str,str,str,str,str]) -> tuple[int,str]:
     h=int(hashlib.sha256(coverage_cell_id(cell).encode()).hexdigest()[:8],16)
     idx=(epoch+h)%min(len(SEARCH_WAVE_NAMES),int(getattr(config,"RC5_SEARCH_WAVES",8)))
     return idx,SEARCH_WAVE_NAMES[idx]
+
+
+def _contingency_specs(cell: Tuple[str, str, str, str, str]) -> List[StrategySpec]:
+    """Fixed causal proxies for Main's contingency archetypes.
+
+    Parameters are derived from market/risk class/timeframe *before* observing
+    outcomes. This is an audit baseline, not an optimizer shortcut. External
+    features without trustworthy historical series (macro/news/liquidation
+    heatmap/whale feed) remain observational; the whale baseline uses causal
+    volume-flow proxies and is labelled accordingly.
+    """
+    system_type, _family, symbol, tf, action = cell
+    direction = _action_direction(system_type, action)
+    w = research_wait_bars(symbol, tf)
+    h = research_hold_bars(symbol, tf)
+    group = group_for_symbol(symbol) if str(system_type).lower() == 'futures' else 'SPOT'
+    fast_exit = group in {'MEDIUM','HIGH'}
+    rr_trend = 1.8 if group == 'HIGH' else 2.0 if fast_exit else 2.4
+    rr_break = 2.0 if group == 'HIGH' else 2.25 if fast_exit else 2.6
+    rr_revert = 1.55 if group == 'HIGH' else 1.75 if fast_exit else 1.9
+    specs = [
+        StrategySpec('TREND_PULLBACK', direction, fast=9, slow=21, rsi_low=43, rsi_high=57,
+                     entry_style='PULLBACK', entry_atr=.22, sl_atr=1.45, rr=rr_trend,
+                     max_wait=w, max_hold=h, trend_strength_min=.20, indicator='CONTINGENCY:TREND_PULLBACK'),
+        StrategySpec('SWEEP_REVERSAL', direction, rsi_low=46, rsi_high=54, lookback=20,
+                     sl_atr=1.25, rr=rr_revert, max_wait=w, max_hold=h,
+                     indicator='CONTINGENCY:LIQUIDITY_SWEEP_MSS'),
+        StrategySpec('BREAKOUT_RETEST', direction, lookback=20, volume_mult=1.05,
+                     entry_style='PULLBACK', entry_atr=.18, sl_atr=1.4, rr=rr_break,
+                     max_wait=w, max_hold=h, volatility_mode='EXPANSION',
+                     indicator='CONTINGENCY:BREAKOUT_RETEST'),
+        StrategySpec('MEAN_REVERSION', direction, rsi_low=30, rsi_high=70,
+                     sl_atr=1.2, rr=rr_revert, max_wait=w, max_hold=h,
+                     volatility_mode='NORMAL', indicator='CONTINGENCY:VALUE_REVERSION'),
+    ]
+    if str(tf).upper() in {'4H','12H','1D'}:
+        specs.append(
+            StrategySpec('MFI_OBV_FLOW', direction, fast=12, slow=36, aux_period=14,
+                         sl_atr=1.4, rr=rr_trend, max_wait=w, max_hold=h,
+                         trend_strength_min=.15, indicator='CONTINGENCY:WHALE_FLOW_CAUSAL_PROXY')
+        )
+    return specs
+
+
+def _compact_contingency_evidence(rows) -> List[Dict[str, Any]]:
+    out=[]
+    for score,spec,metrics,exec_stats in rows:
+        if not str(spec.indicator or '').upper().startswith('CONTINGENCY:'):
+            continue
+        sel=(metrics or {}).get('selection_holdout') or {}
+        out.append({
+            'archetype_proxy': str(spec.indicator).split(':',1)[-1],
+            'family': spec.family, 'direction': spec.direction_mode,
+            'selection_score': round(float(score or 0),4),
+            'selection_n': int(sel.get('resolved') or 0),
+            'selection_exp_r': sel.get('expectancy_r'),
+            'selection_pf': sel.get('profit_factor'),
+            'signals': int((exec_stats or {}).get('signals') or 0),
+            'activated': int((exec_stats or {}).get('activated') or 0),
+        })
+    out.sort(key=lambda r: r['selection_score'], reverse=True)
+    return out[:6]
 
 
 def _core_specs(tf: str) -> List[StrategySpec]:
@@ -347,7 +399,8 @@ def optimize_cell_candidates(cell: Tuple[str, str, str, str, str], owner_engine:
     blocked = {str(x) for x in (blocked_strategy_ids or set()) if x}
     wave_idx, wave_name = _search_wave(cell)
     target_direction = _action_direction(system_type, action)
-    declared_specs = [spec for spec in _wave_specs(tf, wave_name) if spec.direction_mode == target_direction]
+    contingency_specs = [spec for spec in _contingency_specs(cell) if spec.direction_mode == target_direction]
+    declared_specs = contingency_specs + [spec for spec in _wave_specs(tf, wave_name) if spec.direction_mode == target_direction]
     if blocked:
         declared_specs = [spec for spec in declared_specs if _strategy_id(cell, spec) not in blocked]
         # If this wave was already exhausted, advance deterministically through
@@ -370,6 +423,7 @@ def optimize_cell_candidates(cell: Tuple[str, str, str, str, str], owner_engine:
         if rss_mb() >= getattr(config, "MEMORY_HARD_MB", 430):
             break
     coarse.sort(key=lambda x: x[0], reverse=True)
+    contingency_evidence = _compact_contingency_evidence(coarse)
     seeds = coarse[: max(2, int(getattr(config, "CAUSAL_REFINE_SEEDS", 4)))]
 
     refined = list(coarse[:10])
@@ -401,6 +455,7 @@ def optimize_cell_candidates(cell: Tuple[str, str, str, str, str], owner_engine:
             candidates_tested=len(refined), owner_engine=owner_engine,
             finalist_rank=rank, finalists_tested=len(finalists),
             search_wave=wave_name, search_wave_index=wave_idx, declared_candidates=len(declared_specs),
+            contingency_evidence=contingency_evidence,
         ))
     return out
 
@@ -429,7 +484,7 @@ def _causal_dataset_signature(data: Dict[str, Sequence[Any]]) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:24]
 
 
-def _finding(cell, spec, metrics, exec_stats, status, started, data, candidates_tested=0, owner_engine=None, finalist_rank=1, finalists_tested=1, search_wave="REGISTRY", search_wave_index=-1, declared_candidates=1):
+def _finding(cell, spec, metrics, exec_stats, status, started, data, candidates_tested=0, owner_engine=None, finalist_rank=1, finalists_tested=1, search_wave="REGISTRY", search_wave_index=-1, declared_candidates=1, contingency_evidence=None):
     system_type, family, symbol, tf, action = cell
     if spec is None:
         spec = StrategySpec("NONE", "BOTH", max_hold=_hold_bars(tf), max_wait=_wait_bars(tf))
@@ -457,6 +512,9 @@ def _finding(cell, spec, metrics, exec_stats, status, started, data, candidates_
             "causal_strategy_id": strategy_id,
             "causal_strategy_family": spec.family,
             "causal_strategy_spec": spec.__dict__,
+            "contingency_bank_evaluated": True,
+            "contingency_baseline_evidence": list(contingency_evidence or []),
+            "contingency_policy": "FUNCTIONAL_FALLBACK_UNTIL_NEGATIVE_EVIDENCE_BUT_NO_OOS_AUTHORITY_WITHOUT_VALIDATION",
             "finalist_rank_selection_only": int(finalist_rank),
             "finalists_predeclared_for_oos": int(finalists_tested),
             "selection_uses_final_oos": False,

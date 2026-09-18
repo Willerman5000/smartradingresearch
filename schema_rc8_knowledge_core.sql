@@ -85,9 +85,9 @@ create table if not exists public.research_governance_snapshot_v1 (
     id smallint primary key default 1 check (id = 1),
     research_version text,
     updated_at timestamptz not null default now(),
-    target_cells integer not null default 46,
+    target_cells integer not null default 60,
     champion_count integer not null default 0,
-    pending_count integer not null default 46,
+    pending_count integer not null default 60,
     champions jsonb not null default '[]'::jsonb,
     shadow jsonb not null default '[]'::jsonb,
     alpha_summary jsonb not null default '{}'::jsonb
@@ -276,9 +276,9 @@ begin
   ) into v_alpha from public.research_champions_v1;
 
   insert into public.research_governance_snapshot_v1(id,research_version,updated_at,target_cells,champion_count,pending_count,champions,shadow,alpha_summary)
-  values(1,v_version,now(),46,v_count,greatest(0,46-v_count),v_champions,v_shadow,v_alpha)
+  values(1,v_version,now(),60,v_count,greatest(0,60-v_count),v_champions,v_shadow,v_alpha)
   on conflict(id) do update set research_version=excluded.research_version,updated_at=excluded.updated_at,
-    target_cells=46,champion_count=excluded.champion_count,pending_count=excluded.pending_count,
+    target_cells=60,champion_count=excluded.champion_count,pending_count=excluded.pending_count,
     champions=excluded.champions,shadow=excluded.shadow,alpha_summary=excluded.alpha_summary;
 end $$;
 
@@ -432,7 +432,7 @@ begin
  select jsonb_build_object('healthy',count(*) filter(where alpha_state='HEALTHY'),'watch',count(*) filter(where alpha_state='WATCH'),
   'degraded',count(*) filter(where alpha_state like 'DEGRADED%')) into v_alpha from public.research_champions_v1;
  insert into public.research_governance_snapshot_v1(id,research_version,updated_at,target_cells,champion_count,pending_count,champions,shadow,alpha_summary)
- values(1,v_version,now(),46,v_count,greatest(0,46-v_count),v_champions,v_shadow,v_alpha)
+ values(1,v_version,now(),60,v_count,greatest(0,60-v_count),v_champions,v_shadow,v_alpha)
  on conflict(id) do update set research_version=excluded.research_version,updated_at=excluded.updated_at,target_cells=excluded.target_cells,
   champion_count=excluded.champion_count,pending_count=excluded.pending_count,champions=excluded.champions,shadow=excluded.shadow,alpha_summary=excluded.alpha_summary;
 end $$;

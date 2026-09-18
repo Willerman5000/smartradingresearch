@@ -29,6 +29,13 @@ class RestDB:
         self._circuit_lock = threading.Lock()
         self._read_circuit_until = 0.0
         self._transient_failures = 0
+        self._provider_restricted_until = 0.0
+        self._provider_restricted_reason = ''
+        try:
+            _os = __import__('os')
+            self._provider_restricted_cooldown = max(900, int(_os.getenv('SUPABASE_402_COOLDOWN_SECONDS','21600') or 21600))
+        except Exception:
+            self._provider_restricted_cooldown = 21600
         # RC9.1: tiny critical reads (watermark/health) may probe recovery while
         # the normal circuit is open, but at most once every 5s per process.
         self._critical_probe_lock = threading.Lock()
@@ -41,18 +48,18 @@ class RestDB:
         # a consumir la cuota completa.
         try:
             _os = __import__('os')
-            daily_mb = float(_os.getenv('RESEARCH_EGRESS_DAILY_MB', '6') or 6)
+            daily_mb = float(_os.getenv('RESEARCH_EGRESS_DAILY_MB', '2') or 2)
             free_plan_mode = str(_os.getenv('RESEARCH_FREE_PLAN_MODE', '1') or '1').strip().lower() not in {'0','false','no','off'}
         except Exception:
-            daily_mb = 6.0
+            daily_mb = 2.0
             free_plan_mode = True
         # Incluso si Render conserva una variable antigua (p.ej. 18 MB/día),
-        # FREE_PLAN_MODE impone el techo conservador de 6 MB/día/servicio.
+        # FREE_PLAN_MODE impone el techo RC9.7 de 2 MB/día/servicio.
         # Cinco motores Research a este techo + Main a 30 MB/día dejan un
         # margen amplio frente al plan Free incluso antes de considerar caché.
         if free_plan_mode:
-            daily_mb = min(daily_mb, 6.0)
-        self._egress_daily_limit_bytes = max(4.0, min(64.0, daily_mb)) * 1024 * 1024
+            daily_mb = min(daily_mb, 2.0)
+        self._egress_daily_limit_bytes = max(1.0, min(64.0, daily_mb)) * 1024 * 1024
         self._egress_lock = threading.Lock()
         self._egress_day = datetime.now(timezone.utc).date().isoformat()
         self._egress_bytes_today = 0
@@ -68,6 +75,24 @@ class RestDB:
     @staticmethod
     def _transient_status(status: int) -> bool:
         return int(status or 0) in {500, 502, 503, 504, 520, 521, 522, 523, 524}
+
+    def _provider_restricted(self) -> bool:
+        with self._circuit_lock:
+            return time.monotonic() < self._provider_restricted_until
+
+    def _mark_provider_restricted(self, reason: str = 'HTTP_402') -> None:
+        with self._circuit_lock:
+            self._provider_restricted_until = max(
+                self._provider_restricted_until,
+                time.monotonic() + float(self._provider_restricted_cooldown),
+            )
+            self._provider_restricted_reason = str(reason or 'HTTP_402')[:160]
+            self._read_circuit_until = max(self._read_circuit_until, self._provider_restricted_until)
+
+    def _check_response_restriction(self, response) -> None:
+        if int(getattr(response, 'status_code', 0) or 0) == 402:
+            self._mark_provider_restricted('SUPABASE_402_FAIR_USE')
+            raise requests.HTTPError('Supabase HTTP 402 Fair Use restriction', response=response)
 
     def _read_circuit_open(self) -> bool:
         with self._circuit_lock:
@@ -129,6 +154,8 @@ class RestDB:
                retries: int = 1, priority: str = "normal") -> List[Dict[str, Any]]:
         if not self.ready:
             raise RuntimeError("Supabase no configurado")
+        if self._provider_restricted():
+            raise RuntimeError("SUPABASE_402_RESTRICTED")
         priority_name = str(priority or "normal").lower()
         if self._read_circuit_open():
             if priority_name != "critical":
@@ -155,6 +182,7 @@ class RestDB:
                     self._endpoint(table), params=params or {}, headers=headers or {},
                     timeout=(timeout if timeout is not None else self.timeout)
                 )
+                self._check_response_restriction(r)
                 if self._transient_status(r.status_code):
                     raise requests.HTTPError(f"Supabase transient HTTP {r.status_code}", response=r)
                 r.raise_for_status()
@@ -178,12 +206,15 @@ class RestDB:
         payload = list(rows)
         if not payload:
             return
+        if self._provider_restricted():
+            raise RuntimeError("SUPABASE_402_RESTRICTED")
         if self._read_circuit_open():
             raise RuntimeError("SUPABASE_CIRCUIT_OPEN")
         headers = {"Prefer": "resolution=merge-duplicates,return=minimal"}
         params = {"on_conflict": on_conflict} if on_conflict else {}
         try:
             r = self.session.post(self._endpoint(table), params=params, headers=headers, json=payload, timeout=self.timeout)
+            self._check_response_restriction(r)
             if self._transient_status(r.status_code):
                 raise requests.HTTPError(f"Supabase transient HTTP {r.status_code}", response=r)
             r.raise_for_status(); self._read_success()
@@ -194,11 +225,14 @@ class RestDB:
         payload = list(rows)
         if not payload:
             return
+        if self._provider_restricted():
+            raise RuntimeError("SUPABASE_402_RESTRICTED")
         if self._read_circuit_open():
             raise RuntimeError("SUPABASE_CIRCUIT_OPEN")
         headers = {"Prefer": "return=minimal"}
         try:
             r = self.session.post(self._endpoint(table), headers=headers, json=payload, timeout=self.timeout)
+            self._check_response_restriction(r)
             if self._transient_status(r.status_code):
                 raise requests.HTTPError(f"Supabase transient HTTP {r.status_code}", response=r)
             r.raise_for_status(); self._read_success()
@@ -206,10 +240,13 @@ class RestDB:
             self._read_failure(); raise
 
     def patch(self, table: str, values: Dict[str, Any], *, filters: Dict[str, str]) -> None:
+        if self._provider_restricted():
+            raise RuntimeError("SUPABASE_402_RESTRICTED")
         if self._read_circuit_open():
             raise RuntimeError("SUPABASE_CIRCUIT_OPEN")
         try:
             r = self.session.patch(self._endpoint(table), params=filters, headers={"Prefer":"return=minimal"}, json=values, timeout=self.timeout)
+            self._check_response_restriction(r)
             if self._transient_status(r.status_code):
                 raise requests.HTTPError(f"Supabase transient HTTP {r.status_code}", response=r)
             r.raise_for_status(); self._read_success()
@@ -217,10 +254,13 @@ class RestDB:
             self._read_failure(); raise
 
     def rpc(self, function: str, payload: Optional[Dict[str, Any]] = None) -> Any:
+        if self._provider_restricted():
+            raise RuntimeError("SUPABASE_402_RESTRICTED")
         if self._read_circuit_open():
             raise RuntimeError("SUPABASE_CIRCUIT_OPEN")
         try:
             r = self.session.post(f"{self.url}/rest/v1/rpc/{function}", json=payload or {}, timeout=self.timeout)
+            self._check_response_restriction(r)
             if self._transient_status(r.status_code):
                 raise requests.HTTPError(f"Supabase transient HTTP {r.status_code}", response=r)
             r.raise_for_status(); self._read_success()

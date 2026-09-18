@@ -95,8 +95,8 @@ create index if not exists idx_research_champions_action
 create index if not exists idx_research_candidate_memory_action
   on public.research_candidate_memory_v1(system_type, cell_key, action, retest_after, updated_at desc);
 
-alter table public.research_governance_snapshot_v1 alter column target_cells set default 92;
-alter table public.research_governance_snapshot_v1 alter column pending_count set default 92;
+alter table public.research_governance_snapshot_v1 alter column target_cells set default 60;
+alter table public.research_governance_snapshot_v1 alter column pending_count set default 60;
 
 create or replace function maintenance.refresh_research_governance_snapshot_v1()
 returns void language plpgsql security definer set search_path=public,maintenance,pg_temp as $$
@@ -144,9 +144,9 @@ begin
 
   insert into public.research_governance_snapshot_v1(
     id,research_version,updated_at,target_cells,champion_count,pending_count,champions,shadow,alpha_summary
-  ) values(1,v_version,now(),92,v_count,greatest(0,92-v_count),v_champions,v_shadow,v_alpha)
+  ) values(1,v_version,now(),60,v_count,greatest(0,60-v_count),v_champions,v_shadow,v_alpha)
   on conflict(id) do update set research_version=excluded.research_version,updated_at=excluded.updated_at,
-    target_cells=92,champion_count=excluded.champion_count,pending_count=excluded.pending_count,
+    target_cells=60,champion_count=excluded.champion_count,pending_count=excluded.pending_count,
     champions=excluded.champions,shadow=excluded.shadow,alpha_summary=excluded.alpha_summary;
 end $$;
 revoke all on function maintenance.refresh_research_governance_snapshot_v1() from public,anon,authenticated;
