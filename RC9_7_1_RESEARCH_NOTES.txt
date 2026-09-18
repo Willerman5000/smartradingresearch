@@ -1,0 +1,6 @@
+RC9.7.1 RESEARCH RUNTIME FIX
+- Corrige mismatch real: coverage_optimizer seguia generando lanes Legacy (92) y tras el filtro RC9.7 solo sobrevivian 52, faltando SUI/HIGH.
+- Usa operational_contract.optimizer_lanes() como fuente canonica: 60/60 celdas, 24 Spot + 36 Futures.
+- Ownership: execution 8, risk 16, strategy 12, traders 24.
+- Render env defaults alineados: Fast=20 min, Supabase egress=2 MB/dia/servicio.
+- No cambia gates OOS/Holdout/Safety ni 5m/15m.

@@ -9,7 +9,7 @@ exists only to confirm execution persistence and detect alpha decay.
 from __future__ import annotations
 from typing import Any, Dict, List, Tuple
 
-VERSION = "RC9_7_CONTINGENCY_COLDSTART_BACKTEST_PRIMARY"
+VERSION = "RC9_7_1_CONTINGENCY_COLDSTART_BACKTEST_PRIMARY"
 SPOT_SYMBOLS = ("BTC-USDT", "PAXG-USDT", "PAXG-BTC")
 SPOT_TIMEFRAMES = ("4H", "12H", "1D", "1W")
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""RC9.7 — causal coverage + contingency-bank audit.
+"""RC9.7.1 — causal coverage + contingency-bank audit.
 
 The heavy Research contract remains exactly 60 representative cells.  In each
 cell the optimizer evaluates both rotating discovery candidates and a fixed,
@@ -25,25 +25,12 @@ from full_stack_certification import build_full_stack_certification
 from db import utc_now
 from engines.base import runtime_contract, rss_mb
 from historical_market import fetch_market, cache_stats
-from operational_contract import group_for_symbol, research_hold_bars, research_wait_bars
+from operational_contract import group_for_symbol, research_hold_bars, research_wait_bars, optimizer_lanes
 
 EXPERIMENT = "CAUSAL_COVERAGE_STRATEGY"
-FUTURES_SYMBOLS = ("BTC-USDT", "ETH-USDT", "SOL-USDT", "XRP-USDT", "ADA-USDT", "LINK-USDT", "BNB-USDT")
 SPOT_SYMBOLS = ("BTC-USDT", "PAXG-USDT", "PAXG-BTC")
-FUTURES_CORE_TFS = ("30M", "1H", "2H", "4H")
-FUTURES_HIGH_TFS = ("12H", "1D")
-FUTURES_HIGH_TF_SYMBOLS = ("BTC-USDT", "ETH-USDT", "SOL-USDT")
-FUTURES_TFS = FUTURES_CORE_TFS + FUTURES_HIGH_TFS
 SPOT_TFS = ("4H", "12H", "1D", "1W")
 
-
-def _future_cells(tfs: Sequence[str], symbols: Sequence[str] = FUTURES_SYMBOLS) -> List[Tuple[str, str, str, str, str]]:
-    return [("futures", "CRYPTO_FUTURES", symbol, tf, action)
-            for tf in tfs for symbol in symbols for action in ("LONG", "SHORT")]
-
-def _spot_cells(family: str, symbol: str, tfs: Sequence[str]) -> List[Tuple[str, str, str, str, str]]:
-    return [("spot", family, symbol, tf, action)
-            for tf in tfs for action in ("COMPRA_SPOT", "VENTA_SPOT")]
 
 def _action_direction(system_type: str, action: str) -> str:
     action=str(action or '').upper()
@@ -52,19 +39,13 @@ def _action_direction(system_type: str, action: str) -> str:
     return action if action in {'LONG','SHORT'} else 'BOTH'
 
 
-# RC8.1 keeps the four workers but each base market cell is split by action.
-# 12H/1D are also useful as context for lower-TF production decisions, but each
-# remains its own independently validated profitability cell.
-LANES = {
-    "execution": [*_future_cells(("30M",)), *_future_cells(("12H",), FUTURES_HIGH_TF_SYMBOLS)],  # 10
-    "risk": [*_future_cells(("1H",)), *_future_cells(("1D",), FUTURES_HIGH_TF_SYMBOLS)],          # 10
-    "strategy": _future_cells(("2H", "4H")),                                                    # 14
-    "traders": [
-        *_spot_cells("CRYPTO_SPOT", "BTC-USDT", SPOT_TFS),
-        *_spot_cells("PAXG_USDT", "PAXG-USDT", SPOT_TFS),
-        *_spot_cells("PAXG_BTC", "PAXG-BTC", SPOT_TFS),
-    ],                                                    # 24 action cells
-}
+# RC9.7.1 — one canonical source of truth for the 60-cell heavy Research
+# contract.  RC9.7 had left the legacy 92-cell lane generator here and then
+# filtered it against operational_contract; because SUI was absent from that
+# legacy list, only 52 active cells survived and every worker failed the
+# ``expected 60`` invariant before doing causal work.  Importing the lanes from
+# operational_contract keeps coverage, ownership and governance identical.
+LANES = optimizer_lanes()
 
 
 def all_coverage_cells() -> List[Tuple[str, str, str, str, str]]:

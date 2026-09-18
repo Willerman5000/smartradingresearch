@@ -14,7 +14,7 @@ services:
       - key: RESEARCH_AUTO_INTERVAL_MINUTES
         value: 90
       - key: RESEARCH_BOOTSTRAP_FAST_MINUTES
-        value: 5
+        value: 20
       - key: RESEARCH_FREE_PLAN_MODE
         value: 1
       - key: RESEARCH_MAX_SOURCE_ROWS
@@ -26,7 +26,7 @@ services:
       - key: RESEARCH_OBSERVATIONAL_MAX_REFRESH_MINUTES
         value: 240
       - key: RESEARCH_EGRESS_DAILY_MB
-        value: 10
+        value: 2
       - key: DASHBOARD_CACHE_SECONDS
         value: 900
       - key: RESEARCH_BOOT_DELAY_SECONDS
@@ -67,7 +67,7 @@ services:
       - key: RESEARCH_AUTO_INTERVAL_MINUTES
         value: 120
       - key: RESEARCH_BOOTSTRAP_FAST_MINUTES
-        value: 5
+        value: 20
       - key: RESEARCH_FREE_PLAN_MODE
         value: 1
       - key: RESEARCH_MAX_SOURCE_ROWS
@@ -79,7 +79,7 @@ services:
       - key: RESEARCH_OBSERVATIONAL_MAX_REFRESH_MINUTES
         value: 240
       - key: RESEARCH_EGRESS_DAILY_MB
-        value: 10
+        value: 2
       - key: DASHBOARD_CACHE_SECONDS
         value: 900
       - key: RESEARCH_BOOT_DELAY_SECONDS
@@ -120,7 +120,7 @@ services:
       - key: RESEARCH_AUTO_INTERVAL_MINUTES
         value: 180
       - key: RESEARCH_BOOTSTRAP_FAST_MINUTES
-        value: 5
+        value: 20
       - key: RESEARCH_FREE_PLAN_MODE
         value: 1
       - key: RESEARCH_MAX_SOURCE_ROWS
@@ -132,7 +132,7 @@ services:
       - key: RESEARCH_OBSERVATIONAL_MAX_REFRESH_MINUTES
         value: 240
       - key: RESEARCH_EGRESS_DAILY_MB
-        value: 10
+        value: 2
       - key: DASHBOARD_CACHE_SECONDS
         value: 900
       - key: RESEARCH_BOOT_DELAY_SECONDS
@@ -173,7 +173,7 @@ services:
       - key: RESEARCH_AUTO_INTERVAL_MINUTES
         value: 180
       - key: RESEARCH_BOOTSTRAP_FAST_MINUTES
-        value: 5
+        value: 20
       - key: RESEARCH_FREE_PLAN_MODE
         value: 1
       - key: RESEARCH_MAX_SOURCE_ROWS
@@ -185,7 +185,7 @@ services:
       - key: RESEARCH_OBSERVATIONAL_MAX_REFRESH_MINUTES
         value: 240
       - key: RESEARCH_EGRESS_DAILY_MB
-        value: 10
+        value: 2
       - key: DASHBOARD_CACHE_SECONDS
         value: 900
       - key: RESEARCH_BOOT_DELAY_SECONDS
@@ -226,7 +226,7 @@ services:
       - key: RESEARCH_AUTO_INTERVAL_MINUTES
         value: 180
       - key: RESEARCH_BOOTSTRAP_FAST_MINUTES
-        value: 5
+        value: 20
       - key: RESEARCH_FREE_PLAN_MODE
         value: 1
       - key: RESEARCH_MAX_SOURCE_ROWS
@@ -238,7 +238,7 @@ services:
       - key: RESEARCH_OBSERVATIONAL_MAX_REFRESH_MINUTES
         value: 240
       - key: RESEARCH_EGRESS_DAILY_MB
-        value: 10
+        value: 2
       - key: DASHBOARD_CACHE_SECONDS
         value: 900
       - key: RESEARCH_BOOT_DELAY_SECONDS
