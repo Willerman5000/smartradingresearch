@@ -53,15 +53,13 @@ class RestDB:
         except Exception:
             daily_mb = 2.0
             free_plan_mode = True
-        # RC9.7.4: evidence engines stay at 2 MB/day. Validation receives a
-        # still-conservative 4 MB/day because it must read the compact outputs
-        # of the other four services before classifying them. This remains far
-        # below the 5 GB/month Free allowance and prevents an egress guard from
-        # making Validation look permanently empty.
+        # RC9.7.5: Free-plan budgets are fixed in code so an old Render env
+        # cannot starve Validation. Four evidence engines get 4 MB/day each;
+        # Validation gets 16 MB/day for the compact four-engine join. The total
+        # application-read ceiling is ~32 MB/day before the tiny critical reserve.
         if free_plan_mode:
             engine_name = str(_os.getenv('RESEARCH_ENGINE', '') or '').strip().lower()
-            free_cap_mb = 4.0 if engine_name == 'validation' else 2.0
-            daily_mb = min(daily_mb, free_cap_mb)
+            daily_mb = 16.0 if engine_name == 'validation' else 4.0
         self._egress_daily_limit_bytes = max(1.0, min(64.0, daily_mb)) * 1024 * 1024
         self._egress_lock = threading.Lock()
         self._egress_day = datetime.now(timezone.utc).date().isoformat()

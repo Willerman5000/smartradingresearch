@@ -1582,7 +1582,17 @@ def _run_job(days: int, max_rows: int):
             except Exception:
                 pass
             _state.update(last_source_rows=source_count, last_findings=finding_count, last_finished_at=utc_now())
-            _record_run(run_id, 'SUCCESS', source_rows=source_count, findings=finding_count, rss_mb=round(rss_mb(),2))
+            run_meta = {
+                'source_rows': source_count,
+                'findings': finding_count,
+                'rss_mb': round(rss_mb(), 2),
+                'causal_cells': int(_state.get('last_causal_cells') or 0),
+                'causal_profitable': int(_state.get('last_causal_profitable') or 0),
+                'validation_input_rows': int(_state.get('validation_input_rows') or 0),
+                'validation_input_errors': list(_state.get('validation_input_errors') or [])[:4],
+                'egress': central.egress_stats(),
+            }
+            _record_run(run_id, 'SUCCESS', **run_meta)
             print(f'✅ [{config.ENGINE}] source={source_count} findings={finding_count} rss={rss_mb():.1f}MB', flush=True)
         except Exception as exc:
             _state['last_error'] = f'{type(exc).__name__}: {exc}'
@@ -1593,7 +1603,18 @@ def _run_job(days: int, max_rows: int):
             _state['running'] = False
             gc.collect()
             _state['last_rss_mb'] = round(rss_mb(),2)
-            _heartbeat(last_run_id=run_id, last_error=_state.get('last_error'))
+            _heartbeat(
+                last_run_id=run_id,
+                last_error=_state.get('last_error'),
+                last_findings=int(_state.get('last_findings') or 0),
+                last_source_rows=int(_state.get('last_source_rows') or 0),
+                last_causal_cells=int(_state.get('last_causal_cells') or 0),
+                last_causal_profitable=int(_state.get('last_causal_profitable') or 0),
+                validation_input_rows=int(_state.get('validation_input_rows') or 0),
+                validation_input_errors=list(_state.get('validation_input_errors') or [])[:4],
+                bootstrap_pending=int(_state.get('bootstrap_pending') or 0),
+                egress=central.egress_stats(),
+            )
 
 
 def _start_job(days=None, max_rows=None):
@@ -1677,21 +1698,47 @@ def dashboard_api():
     })
 
 
+def _friendly_data_status(error_text: str):
+    msg = str(error_text or '')
+    upper = msg.upper()
+    if 'SUPABASE_EGRESS_GUARD_OPEN' in upper:
+        return (
+            'LECTURAS APLAZADAS POR PROTECCIÓN DE CUOTA',
+            'Se alcanzó el presupuesto interno de lectura del servicio para hoy. La evidencia ya guardada se conserva y las lecturas se reanudan automáticamente al renovarse el presupuesto.',
+        )
+    if 'SUPABASE_402' in upper or 'HTTP 402' in upper:
+        return (
+            'PROVEEDOR RESTRINGIDO',
+            'Supabase está rechazando temporalmente solicitudes por cuota o fair use. La evidencia ya guardada se conserva.',
+        )
+    if 'READ_CIRCUIT_OPEN' in upper or 'CIRCUIT_OPEN' in upper:
+        return (
+            'CONEXIÓN EN RECUPERACIÓN',
+            'Se detectaron fallos transitorios y el sistema abrió una pausa corta para evitar reintentos masivos.',
+        )
+    return (
+        'DATOS TEMPORALMENTE NO DISPONIBLES',
+        'La base de datos no respondió al último refresco. La evidencia ya guardada se conserva.',
+    )
+
+
 @app.get('/api/export/summary')
 def export_summary():
     rows=_dashboard_rows()
     state=_dashboard_cache_state()
     if not rows and state.get('error'):
+        status_label, reason = _friendly_data_status(state.get('error'))
         text=(f'# Research Federation · {config.ENGINE.upper()}\n\n'
               f'- Versión: {config.VERSION}\n- Autoridad: RESEARCH_ONLY\n'
-              '- Estado: DATOS TEMPORALMENTE NO DISPONIBLES\n'
-              '- Motivo: proveedor de base de datos temporalmente inaccesible.\n'
-              '- Política: no se interpreta esta indisponibilidad como pérdida de Champions ni como evidencia de trading.\n')
+              f'- Estado: {status_label}\n'
+              f'- Motivo: {reason}\n'
+              '- Política: una pausa de infraestructura o ahorro de datos no se interpreta como pérdida de evidencia ni como señal de trading.\n')
         return Response(text, status=200, mimetype='text/markdown; charset=utf-8')
     items=[_compact_metric(r) for r in rows]
     text=_markdown_report(items)
     if state.get('error'):
-        text += '\n\n> Datos cacheados: Supabase no respondió al último refresco.\n'
+        status_label, reason = _friendly_data_status(state.get('error'))
+        text += f'\n\n> {status_label}: {reason}\n'
     return Response(text, status=200, mimetype='text/markdown; charset=utf-8')
 
 

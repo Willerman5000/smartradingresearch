@@ -63,7 +63,7 @@ LEARNING_MODE = "BACKTEST_OOS_PRIMARY_LIVE_ALPHA_DECAY"
 REVIEWTRADER_PRIMARY_SOURCE = "RESEARCH_BACKTEST_OOS"
 LIVE_ROLE = "ALPHA_DECAY_AND_EXECUTION_VALIDATION"
 VERSION = "RFV1_15_RC9_7_1_60CELL_RUNTIME_FIX_20260918"
-SCHEDULER_POLICY_VERSION = "RC9_7_4_FINAL_FREEZE_VALIDATION_COMPACT"
+SCHEDULER_POLICY_VERSION = "RC9_7_5_FINAL_POLISH_VALIDATION_EGRESS"
 RELEASE_LABEL = "V1.1 · BACKTEST-PRIMARY EDGE · FINAL FREEZE"
 VALID_ENGINES = {"execution", "risk", "strategy", "traders", "validation"}
 DASHBOARD_MAX_ROWS = _int("RESEARCH_DASHBOARD_MAX_ROWS", 180, 20, 300)
@@ -71,12 +71,14 @@ DASHBOARD_MAX_ROWS = _int("RESEARCH_DASHBOARD_MAX_ROWS", 180, 20, 300)
 FREE_PLAN_MODE = _bool("RESEARCH_FREE_PLAN_MODE", True)
 OBSERVATIONAL_MIN_REFRESH_MINUTES = _int("RESEARCH_OBSERVATIONAL_MIN_REFRESH_MINUTES", 60, 15, 720)
 OBSERVATIONAL_MAX_REFRESH_MINUTES = _int("RESEARCH_OBSERVATIONAL_MAX_REFRESH_MINUTES", 240, 60, 1440)
-# RC9.7.4: Validation needs to read the compact outputs of the four evidence
-# engines. Give only that service a 4 MB/day ceiling; all other Research
-# services remain at 2 MB/day. Even with five services this is far below the
-# 5 GB/month Supabase budget and avoids starving the final validation join.
-_FREE_EGRESS_CAP_MB = 4 if ENGINE == "validation" else 2
-EGRESS_DAILY_MB = min(_int("RESEARCH_EGRESS_DAILY_MB", _FREE_EGRESS_CAP_MB, 1, 64), _FREE_EGRESS_CAP_MB) if FREE_PLAN_MODE else _int("RESEARCH_EGRESS_DAILY_MB", 10, 1, 64)
+# RC9.7.5 final polish: keep a hard Free-plan budget while preventing the
+# validation service from starving itself. Evidence engines get 4 MB/day and
+# Validation 16 MB/day. Worst-case application reads stay around 32 MB/day
+# (~0.96 GB/30d), leaving wide headroom under Supabase Free's 5 GB egress.
+# In Free mode this safety budget is authoritative so stale Render env values
+# such as 2/4 MB cannot silently disable Validation again.
+_FREE_EGRESS_CAP_MB = 16 if ENGINE == "validation" else 4
+EGRESS_DAILY_MB = _FREE_EGRESS_CAP_MB if FREE_PLAN_MODE else _int("RESEARCH_EGRESS_DAILY_MB", 10, 1, 64)
 MIN_NET_EVIDENCE_PCT = _int("RESEARCH_MIN_NET_EVIDENCE_PCT", 80, 0, 100)
 WALK_FORWARD_FOLDS = _int("RESEARCH_WALK_FORWARD_FOLDS", 3, 2, 6)
 
