@@ -450,26 +450,55 @@ def _stage_priority(stage):
 
 
 def _row_in_active_contract(row):
-    """RC4.1: UI/report filter only; legacy findings remain persisted."""
-    scope = (row or {}).get('scope') or {}
-    meta = (row or {}).get('meta') or {}
+    """Hotfix 9.6.1: exact 60-cell representative contract for UI/report.
+
+    Legacy/local Champions outside the heavy Research universe stay persisted
+    and remain usable as local evidence in Main, but they do not count toward
+    completion of the new 60 representative discovery cells.
+    """
+    row = row or {}
+    scope = row.get('scope') or {}
+    meta = row.get('meta') or {}
     cell = meta.get('coverage_cell') or {}
     market = str(scope.get('market_family') or cell.get('market_family') or '').upper()
     symbol = str(scope.get('symbol') or cell.get('symbol') or '').upper().replace('/', '-')
     tf = str(scope.get('timeframe') or cell.get('timeframe') or '').upper()
+    action = str(scope.get('action') or cell.get('action') or scope.get('direction') or '').upper()
+
+    # Non-cell diagnostics remain visible, but never count as causal coverage.
     if not tf:
-        # Non-cell evidence without TF is kept visible; it is not a retired TF.
         return True
-    if market == 'CRYPTO_FUTURES':
-        if tf in {'30M','1H','2H','4H'}:
-            return symbol in {'BTC-USDT','ETH-USDT','SOL-USDT','XRP-USDT','ADA-USDT','LINK-USDT','BNB-USDT'} or not symbol
-        if tf in {'12H','1D'}:
-            return symbol in {'BTC-USDT','ETH-USDT','SOL-USDT'}
+
+    try:
+        from operational_contract import coverage_cell_id_in_active_contract
+        system = 'FUTURES' if market == 'CRYPTO_FUTURES' else 'SPOT'
+        if market not in {'CRYPTO_FUTURES','CRYPTO_SPOT','PAXG_BTC','PAXG_USDT','SPOT'}:
+            return False
+        if system == 'SPOT':
+            if action in {'LONG','BUY','COMPRA'}:
+                action = 'COMPRA_SPOT'
+            elif action in {'SHORT','SELL','VENTA'}:
+                action = 'VENTA_SPOT'
+        elif system == 'FUTURES':
+            if action in {'COMPRA_SPOT','BUY'}:
+                action = 'LONG'
+            elif action in {'VENTA_SPOT','SELL'}:
+                action = 'SHORT'
+        cell_id = f'{system}|{market}|{symbol}|{tf}|{action}'
+        return bool(coverage_cell_id_in_active_contract(cell_id))
+    except Exception:
+        # Exact fallback mirrors operational_contract.py.
+        futures = {
+            'BTC-USDT': {'30M','1H','2H','4H','12H','1D'},
+            'XRP-USDT': {'30M','1H','2H','4H','12H'},
+            'LINK-USDT': {'30M','1H','2H','4H'},
+            'SUI-USDT': {'30M','1H','2H'},
+        }
+        if market == 'CRYPTO_FUTURES':
+            return tf in futures.get(symbol, set())
+        if market in {'CRYPTO_SPOT','PAXG_BTC','PAXG_USDT','SPOT'}:
+            return symbol in {'BTC-USDT','PAXG-USDT','PAXG-BTC'} and tf in {'4H','12H','1D','1W'}
         return False
-    if market in {'CRYPTO_SPOT','PAXG_BTC','PAXG_USDT'}:
-        return tf in {'4H','12H','1D','1W'}
-    # Generic research evidence: explicitly retire old fast TFs from default report.
-    return tf not in {'5M','15M'}
 
 
 _SHADOW_STAGES = {'SHADOW_READY','SHADOW_READY_FAST'}
@@ -859,8 +888,22 @@ def _compact_metric(row):
 
 def _markdown_report(items):
     title = f'Research Federation · {config.ENGINE.upper()} · {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}'
-    lines=[f'# {title}', '', f'- Versión: {config.VERSION}', f'- Autoridad: RESEARCH_ONLY', f'- RSS actual: {rss_mb():.1f} MB', f'- Elementos mostrados: {len(items)}', '']
-    causal_all=[x for x in items if str(x.get('experiment') or '') in {'CAUSAL_COVERAGE_STRATEGY','CAUSAL_REGISTRY_RETEST','CAUSAL_SHADOW_RECYCLE'}]
+    active_items=[x for x in items if _row_in_active_contract(x)]
+    legacy_hidden=max(0, len(items)-len(active_items))
+    lines=[
+        f'# {title}', '',
+        f'- Versión: {config.VERSION}',
+        f'- Autoridad: RESEARCH_ONLY',
+        f'- RSS actual: {rss_mb():.1f} MB',
+        f'- Elementos del contrato activo: {len(active_items)}',
+        f'- Evidencia Legacy retenida fuera del contrato: {legacy_hidden}',
+        ''
+    ]
+    causal_all=[
+        x for x in items
+        if str(x.get('experiment') or '') in {'CAUSAL_COVERAGE_STRATEGY','CAUSAL_REGISTRY_RETEST','CAUSAL_SHADOW_RECYCLE'}
+        and _row_in_active_contract(x)
+    ]
     causal=_best_causal_per_cell(causal_all)
     if causal:
         required=_required_research_cells()
@@ -883,8 +926,6 @@ def _markdown_report(items):
             meta=it.get('meta') or {}; cell=meta.get('coverage_cell') or {}
             lines.append(f"- {it.get('stage')} | {cell.get('market_family')} {cell.get('symbol')} {cell.get('timeframe')} {cell.get('action') or (it.get('scope') or {}).get('action') or '--'} | {meta.get('causal_strategy_family')} | N={it.get('resolved')} | OOS.N={it.get('validation_n')} | OOS.Exp.R={it.get('validation_expectancy_r')} | OOS.PF={it.get('validation_profit_factor')}")
         lines.append('')
-    active_items=[x for x in items if _row_in_active_contract(x)]
-    legacy_hidden=max(0, len(items)-len(active_items))
     ordered=sorted(active_items, key=lambda x: ((x.get('validation_expectancy_r') is not None), x.get('validation_expectancy_r') or -999, x.get('validation_n') or 0), reverse=True)
     lines.append('## Evidencia principal')
     lines.append('> Filas CAUSAL_COVERAGE_STRATEGY son replay causal. Las demás conservan atribución observacional con holdout temporal.')
