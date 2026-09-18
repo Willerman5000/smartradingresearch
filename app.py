@@ -19,7 +19,10 @@ from coverage_optimizer import (
     analyze_coverage_for_engine, all_coverage_cells, owner_for_cell, coverage_cell_id,
     optimize_cell, optimize_cell_candidates, retest_registry_promotions
 )
-from operational_contract import optimizer_lanes, research_hold_bars, research_wait_bars
+from operational_contract import (
+    optimizer_lanes, research_hold_bars, research_wait_bars,
+    priority_rank_for_coverage_id,
+)
 
 # Commit 9.6: patch the existing optimizer's lane registry instead of forking its
 # 600-line causal engine. All optimizer functions resolve LANES dynamically, so
@@ -920,6 +923,7 @@ def _markdown_report(items):
             f'- Cobertura investigada completa: {"SI" if len(causal)>=required else "NO"}',
             '> RC8: una celda validada conserva su Champion. Los nuevos candidatos son Challengers; sólo evidencia negativa del propio Champion puede reabrir la celda al ciclo iterativo.',
             '> Discovery 60% → Selection Holdout 20% → Final OOS 20%. Final OOS no se usa para elegir finalistas.',
+            '> RC9.6.2 prioriza investigación pendiente en Futures 30M→1H→2H y Spot 4H→12H; sólo cambia el orden de búsqueda, nunca los umbrales de validación ni Safety.',
             ''
         ]
         for it in sorted(causal, key=lambda x: str((x.get('meta') or {}).get('coverage_cell_id') or '')):
@@ -981,6 +985,10 @@ def _rescue_missing_causal_cells(run_id: str):
         print('⚠️ [I.2 VALIDATION] rescate omitido: cobertura actual no legible por infraestructura', flush=True)
         return 0
     missing=[cell for cell in _active_coverage_cells() if coverage_cell_id(cell) not in present]
+    # RC9.6.2: rescue Fast TFs first without changing evidence thresholds.
+    # This accelerates discovery where operational opportunity frequency matters
+    # most (30M/1H/2H) while preserving the exact same 60-cell contract.
+    missing.sort(key=lambda cell: priority_rank_for_coverage_id(coverage_cell_id(cell)))
     cap=int(getattr(config,'CAUSAL_VALIDATION_RESCUE_MAX_CELLS',12))
     missing=missing[:cap]
     if not missing:
@@ -1315,18 +1323,23 @@ def _blocked_candidate_strategy_ids():
 
 
 def _priority_cells_for_engine(engine: str):
-    """Prioritize genuinely empty/degraded cells from the Commit 9.6 representative action core."""
+    """Pending cells ordered for opportunity-frequency research.
+
+    The ordering is scheduling only. It never changes OOS/holdout requirements
+    or gives a fast cell authority before validation.
+    """
     try:
         filled=_canonical_champion_cells(engine)
     except Exception:
-        return set()
-    priority=set()
+        return []
+    priority=[]
     for cell in _active_coverage_cells():
         if owner_for_cell(cell)!=str(engine).lower():
             continue
         cid=coverage_cell_id(cell)
         if cid not in filled:
-            priority.add(cid)
+            priority.append(cid)
+    priority.sort(key=priority_rank_for_coverage_id)
     return priority
 
 
@@ -1435,7 +1448,11 @@ def _run_job(days: int, max_rows: int):
                 def _publish_causal(finding):
                     current_keys.update(_upsert_findings([finding], run_id, fingerprint))
                 bootstrap = _bootstrap_status(config.ENGINE) if bool(getattr(config, 'BOOTSTRAP_ACCELERATED', True)) else {"pending_ids": set()}
-                bootstrap_pending = set(bootstrap.get('pending_ids') or set())
+                bootstrap_pending_ids = set(bootstrap.get('pending_ids') or set())
+                bootstrap_pending = sorted(
+                    bootstrap_pending_ids,
+                    key=priority_rank_for_coverage_id,
+                )
                 # RC5: broad candidate search runs only for cells that are not
                 # Shadow-ready. Once the whole lane is validated, the 3h cycle
                 # retests incumbents on new candles rather than replacing a
